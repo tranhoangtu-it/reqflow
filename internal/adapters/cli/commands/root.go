@@ -32,5 +32,9 @@ func NewRootCommand(a *app.App) *cobra.Command {
 	root.AddCommand(newPatchCommand(a))
 	root.AddCommand(newDeleteCommand(a))
 
+	// Register import/export subcommands.
+	root.AddCommand(newImportCommand(a))
+	root.AddCommand(newExportCommand(a))
+
 	return root
 }
