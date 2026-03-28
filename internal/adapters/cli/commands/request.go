@@ -101,43 +101,21 @@ func makeRunE(a *app.App, method domain.HTTPMethod, hasBody bool) func(cmd *cobr
 			config.Timeout = timeout
 		}
 
-		// Apply default headers from config (these can be overridden by CLI flags).
+		// Build headers: config defaults first, then CLI flags override by key.
 		cfg := configFromContext(cmd.Context())
-		if cfg != nil && len(cfg.DefaultHeaders) > 0 {
-			for _, h := range cfg.DefaultHeaders {
-				config.Headers = append(config.Headers, domain.Header{Key: h.Key, Value: h.Value})
-			}
+		var configHeaders []domain.Header
+		if cfg != nil {
+			configHeaders = cfg.DefaultHeaders
 		}
-
-		// Parse headers from persistent flags (override config defaults).
 		headers, _ := cmd.Flags().GetStringSlice("header")
-		cliHeaderKeys := make(map[string]bool)
+		var cliHeaders []domain.Header
 		for _, h := range headers {
 			key, value, ok := parseHeader(h)
 			if ok {
-				cliHeaderKeys[key] = true
-				config.Headers = append(config.Headers, domain.Header{Key: key, Value: value})
+				cliHeaders = append(cliHeaders, domain.Header{Key: key, Value: value})
 			}
 		}
-
-		// Remove config default headers that were overridden by CLI flags.
-		if len(cliHeaderKeys) > 0 {
-			filtered := make([]domain.Header, 0, len(config.Headers))
-			seen := make(map[string]bool)
-			// Walk in reverse so CLI flags (later) take precedence over config (earlier).
-			for i := len(config.Headers) - 1; i >= 0; i-- {
-				h := config.Headers[i]
-				if !seen[h.Key] {
-					seen[h.Key] = true
-					filtered = append(filtered, h)
-				}
-			}
-			// Reverse to restore order.
-			for i, j := 0, len(filtered)-1; i < j; i, j = i+1, j-1 {
-				filtered[i], filtered[j] = filtered[j], filtered[i]
-			}
-			config.Headers = filtered
-		}
+		config.Headers = mergeHeaders(configHeaders, cliHeaders)
 
 		// Parse query params from persistent flags.
 		queries, _ := cmd.Flags().GetStringSlice("query")
@@ -264,6 +242,31 @@ func parseAuthFlags(cmd *cobra.Command) (*domain.AuthConfig, error) {
 	}
 
 	return nil, nil
+}
+
+// mergeHeaders combines config default headers with CLI flag headers.
+// CLI headers override config headers with the same key.
+func mergeHeaders(configHeaders, cliHeaders []domain.Header) []domain.Header {
+	if len(configHeaders) == 0 {
+		return cliHeaders
+	}
+
+	// Build set of CLI header keys for fast lookup.
+	cliKeys := make(map[string]bool, len(cliHeaders))
+	for _, h := range cliHeaders {
+		cliKeys[h.Key] = true
+	}
+
+	// Start with config headers that are not overridden.
+	merged := make([]domain.Header, 0, len(configHeaders)+len(cliHeaders))
+	for _, h := range configHeaders {
+		if !cliKeys[h.Key] {
+			merged = append(merged, h)
+		}
+	}
+	// Append all CLI headers.
+	merged = append(merged, cliHeaders...)
+	return merged
 }
 
 // resolveTimeout returns a sensible timeout value.
