@@ -3,10 +3,12 @@ package commands
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/ye-kart/reqflow/internal/adapters/cli/output"
 	"github.com/ye-kart/reqflow/internal/app"
 	"github.com/ye-kart/reqflow/internal/domain"
 )
@@ -147,9 +149,11 @@ func makeRunE(a *app.App, method domain.HTTPMethod, hasBody bool) func(cmd *cobr
 			return fmt.Errorf("request failed: %w", err)
 		}
 
-		// Write response body to stdout (full formatters come from another branch).
-		cmd.Print(string(result.Response.Body))
-		return nil
+		// Format and write response.
+		outputFmt, _ := cmd.Flags().GetString("output")
+		noColor, _ := cmd.Flags().GetBool("no-color")
+		formatter := output.New(domain.OutputFormat(outputFmt), noColor)
+		return formatter.FormatResponse(os.Stdout, result.Response)
 	}
 }
 
