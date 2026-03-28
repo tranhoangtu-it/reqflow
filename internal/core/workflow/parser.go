@@ -25,6 +25,9 @@ type rawStep struct {
 	Assert      []rawAssertion    `yaml:"assert"`
 	Auth        *rawAuth          `yaml:"auth"`
 	ContentType string            `yaml:"content_type"`
+	Parallel    []rawStep         `yaml:"parallel"`
+	MaxParallel int               `yaml:"max_parallel"`
+	FailFast    *bool             `yaml:"fail_fast"`
 }
 
 type rawAssertion struct {
@@ -80,6 +83,16 @@ func convertStep(rs rawStep, index int) (domain.Step, error) {
 	if rs.Name == "" {
 		return domain.Step{}, fmt.Errorf("step %d: name is required", index)
 	}
+
+	// Parallel step: has sub-steps instead of method/url
+	if rs.Parallel != nil {
+		if len(rs.Parallel) == 0 {
+			return domain.Step{}, fmt.Errorf("step %q: parallel block must have at least one sub-step", rs.Name)
+		}
+		return convertParallelStep(rs)
+	}
+
+	// Regular step: requires method and url
 	if rs.Method == "" {
 		return domain.Step{}, fmt.Errorf("step %q: method is required", rs.Name)
 	}
@@ -120,6 +133,30 @@ func convertStep(rs rawStep, index int) (domain.Step, error) {
 		Assert:      assertions,
 		Auth:        authConfig,
 		ContentType: rs.ContentType,
+	}, nil
+}
+
+func convertParallelStep(rs rawStep) (domain.Step, error) {
+	subSteps := make([]domain.Step, 0, len(rs.Parallel))
+	for i, sub := range rs.Parallel {
+		s, err := convertStep(sub, i)
+		if err != nil {
+			return domain.Step{}, fmt.Errorf("parallel step %q: %w", rs.Name, err)
+		}
+		subSteps = append(subSteps, s)
+	}
+
+	// Default FailFast to true
+	failFast := true
+	if rs.FailFast != nil {
+		failFast = *rs.FailFast
+	}
+
+	return domain.Step{
+		Name:        rs.Name,
+		Parallel:    subSteps,
+		MaxParallel: rs.MaxParallel,
+		FailFast:    failFast,
 	}, nil
 }
 

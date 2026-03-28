@@ -37,36 +37,55 @@ func (r *Runner) Run(ctx context.Context, wf domain.Workflow, initialVars map[st
 	}
 
 	for _, step := range wf.Steps {
-		var stepResult domain.StepResult
-		if step.Poll != nil {
-			stepResult = r.pollStep(ctx, step, vars)
-		} else if step.Retry != nil {
-			stepResult = r.retryStep(ctx, step, vars)
-		} else {
-			stepResult = r.executeStep(ctx, step, vars)
-		}
-		result.Steps = append(result.Steps, stepResult)
+		var stepResults []domain.StepResult
+		var extractedVars map[string]string
 
-		// Count assertions
-		for _, ar := range stepResult.Assertions {
-			if ar.Passed {
-				result.TotalPassed++
-			} else {
-				result.TotalFailed++
+		if len(step.Parallel) > 0 {
+			subResults, mergedVars, err := r.runParallel(ctx, step, vars)
+			if err != nil {
+				break
+			}
+			stepResults = subResults
+			extractedVars = mergedVars
+		} else if step.Poll != nil {
+			sr := r.pollStep(ctx, step, vars)
+			stepResults = []domain.StepResult{sr}
+			extractedVars = sr.Extracted
+		} else if step.Retry != nil {
+			sr := r.retryStep(ctx, step, vars)
+			stepResults = []domain.StepResult{sr}
+			extractedVars = sr.Extracted
+		} else {
+			sr := r.executeStep(ctx, step, vars)
+			stepResults = []domain.StepResult{sr}
+			extractedVars = sr.Extracted
+		}
+
+		// Collect results and count assertions
+		hasError := false
+		for _, sr := range stepResults {
+			result.Steps = append(result.Steps, sr)
+			if sr.Error != nil {
+				hasError = true
+			}
+			for _, ar := range sr.Assertions {
+				if ar.Passed {
+					result.TotalPassed++
+				} else {
+					result.TotalFailed++
+				}
 			}
 		}
 
-		// Stop on HTTP error
-		if stepResult.Error != nil {
+		if hasError {
 			break
 		}
 
-		// Merge extracted variables for next step
-		for k, v := range stepResult.Extracted {
+		// Merge extracted variables for subsequent steps
+		for k, v := range extractedVars {
 			vars[k] = v
 		}
 
-		// Stop on first assertion failure
 		if result.TotalFailed > 0 {
 			break
 		}

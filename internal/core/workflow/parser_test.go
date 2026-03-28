@@ -253,3 +253,97 @@ func TestParse_InvalidYAML(t *testing.T) {
 		t.Fatal("expected error for invalid YAML, got nil")
 	}
 }
+
+func TestParse_ParallelBlockWithTwoSubSteps(t *testing.T) {
+	data := []byte(`
+name: parallel-test
+steps:
+  - name: fetch both
+    parallel:
+      - name: get users
+        method: GET
+        url: https://api.example.com/users
+      - name: get posts
+        method: GET
+        url: https://api.example.com/posts
+`)
+
+	wf, err := workflow.Parse(data)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(wf.Steps) != 1 {
+		t.Fatalf("steps count = %d, want 1", len(wf.Steps))
+	}
+
+	step := wf.Steps[0]
+	if step.Name != "fetch both" {
+		t.Errorf("step.Name = %q, want %q", step.Name, "fetch both")
+	}
+	if len(step.Parallel) != 2 {
+		t.Fatalf("parallel count = %d, want 2", len(step.Parallel))
+	}
+	if step.Parallel[0].Name != "get users" {
+		t.Errorf("parallel[0].Name = %q, want %q", step.Parallel[0].Name, "get users")
+	}
+	if step.Parallel[0].Method != domain.MethodGet {
+		t.Errorf("parallel[0].Method = %q, want %q", step.Parallel[0].Method, domain.MethodGet)
+	}
+	if step.Parallel[0].URL != "https://api.example.com/users" {
+		t.Errorf("parallel[0].URL = %q, want %q", step.Parallel[0].URL, "https://api.example.com/users")
+	}
+	if step.Parallel[1].Name != "get posts" {
+		t.Errorf("parallel[1].Name = %q, want %q", step.Parallel[1].Name, "get posts")
+	}
+}
+
+func TestParse_ParallelStepWithoutSubStepsReturnsError(t *testing.T) {
+	data := []byte(`
+name: bad-parallel
+steps:
+  - name: empty parallel
+    parallel: []
+`)
+
+	_, err := workflow.Parse(data)
+	if err == nil {
+		t.Fatal("expected error for parallel step without sub-steps, got nil")
+	}
+}
+
+func TestParse_ParallelMaxParallelField(t *testing.T) {
+	data := []byte(`
+name: throttled-parallel
+steps:
+  - name: throttled
+    max_parallel: 2
+    fail_fast: false
+    parallel:
+      - name: step a
+        method: GET
+        url: https://api.example.com/a
+      - name: step b
+        method: GET
+        url: https://api.example.com/b
+      - name: step c
+        method: GET
+        url: https://api.example.com/c
+`)
+
+	wf, err := workflow.Parse(data)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	step := wf.Steps[0]
+	if step.MaxParallel != 2 {
+		t.Errorf("MaxParallel = %d, want 2", step.MaxParallel)
+	}
+	if step.FailFast != false {
+		t.Errorf("FailFast = %v, want false", step.FailFast)
+	}
+	if len(step.Parallel) != 3 {
+		t.Fatalf("parallel count = %d, want 3", len(step.Parallel))
+	}
+}

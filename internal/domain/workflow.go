@@ -20,6 +20,7 @@ type RetryConfig struct {
 }
 
 // Step represents a single HTTP request within a workflow.
+// A step may contain a Parallel block of sub-steps that execute concurrently.
 type Step struct {
 	Name        string
 	Method      HTTPMethod
@@ -32,6 +33,9 @@ type Step struct {
 	ContentType string
 	Poll        *PollConfig
 	Retry       *RetryConfig
+	Parallel    []Step // sub-steps to run in parallel
+	MaxParallel int    // concurrency limit (0 = unlimited)
+	FailFast    bool   // cancel remaining on first failure (default true)
 }
 
 // PollConfig configures poll-until-ready behavior for async endpoints.
