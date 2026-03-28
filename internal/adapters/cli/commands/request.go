@@ -101,13 +101,42 @@ func makeRunE(a *app.App, method domain.HTTPMethod, hasBody bool) func(cmd *cobr
 			config.Timeout = timeout
 		}
 
-		// Parse headers from persistent flags.
+		// Apply default headers from config (these can be overridden by CLI flags).
+		cfg := configFromContext(cmd.Context())
+		if cfg != nil && len(cfg.DefaultHeaders) > 0 {
+			for _, h := range cfg.DefaultHeaders {
+				config.Headers = append(config.Headers, domain.Header{Key: h.Key, Value: h.Value})
+			}
+		}
+
+		// Parse headers from persistent flags (override config defaults).
 		headers, _ := cmd.Flags().GetStringSlice("header")
+		cliHeaderKeys := make(map[string]bool)
 		for _, h := range headers {
 			key, value, ok := parseHeader(h)
 			if ok {
+				cliHeaderKeys[key] = true
 				config.Headers = append(config.Headers, domain.Header{Key: key, Value: value})
 			}
+		}
+
+		// Remove config default headers that were overridden by CLI flags.
+		if len(cliHeaderKeys) > 0 {
+			filtered := make([]domain.Header, 0, len(config.Headers))
+			seen := make(map[string]bool)
+			// Walk in reverse so CLI flags (later) take precedence over config (earlier).
+			for i := len(config.Headers) - 1; i >= 0; i-- {
+				h := config.Headers[i]
+				if !seen[h.Key] {
+					seen[h.Key] = true
+					filtered = append(filtered, h)
+				}
+			}
+			// Reverse to restore order.
+			for i, j := 0, len(filtered)-1; i < j; i, j = i+1, j-1 {
+				filtered[i], filtered[j] = filtered[j], filtered[i]
+			}
+			config.Headers = filtered
 		}
 
 		// Parse query params from persistent flags.
