@@ -3,8 +3,10 @@ package httpclient
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"io"
 	"net/http"
+	"net/http/httptrace"
 	"net/url"
 	"time"
 
@@ -21,6 +23,7 @@ const defaultTimeout = 30 * time.Second
 // and satisfies the driven.HTTPClient port interface.
 type Client struct {
 	httpClient *http.Client
+	trace      bool
 }
 
 // Option configures the Client.
@@ -37,6 +40,13 @@ func WithTimeout(d time.Duration) Option {
 func WithTransport(t http.RoundTripper) Option {
 	return func(c *Client) {
 		c.httpClient.Transport = t
+	}
+}
+
+// WithTrace enables detailed timing instrumentation via httptrace.
+func WithTrace(enabled bool) Option {
+	return func(c *Client) {
+		c.trace = enabled
 	}
 }
 
@@ -78,6 +88,11 @@ func (c *Client) Do(ctx context.Context, req domain.HTTPRequest) (domain.HTTPRes
 		httpReq.Header.Set("Content-Type", req.ContentType)
 	}
 
+	var timing domain.TimingInfo
+	if c.trace {
+		httpReq = c.withTrace(httpReq, &timing)
+	}
+
 	start := time.Now()
 	httpResp, err := c.httpClient.Do(httpReq)
 	duration := time.Since(start)
@@ -85,6 +100,10 @@ func (c *Client) Do(ctx context.Context, req domain.HTTPRequest) (domain.HTTPRes
 		return domain.HTTPResponse{}, err
 	}
 	defer httpResp.Body.Close()
+
+	if c.trace {
+		timing.Total = duration
+	}
 
 	body, err := io.ReadAll(httpResp.Body)
 	if err != nil {
@@ -105,7 +124,50 @@ func (c *Client) Do(ctx context.Context, req domain.HTTPRequest) (domain.HTTPRes
 		Body:       body,
 		Duration:   duration,
 		Size:       int64(len(body)),
+		Timing:     timing,
 	}, nil
+}
+
+// withTrace attaches an httptrace.ClientTrace to the request to capture timing.
+func (c *Client) withTrace(req *http.Request, timing *domain.TimingInfo) *http.Request {
+	var (
+		dnsStart     time.Time
+		connectStart time.Time
+		tlsStart     time.Time
+		reqStart     = time.Now()
+	)
+
+	trace := &httptrace.ClientTrace{
+		DNSStart: func(_ httptrace.DNSStartInfo) {
+			dnsStart = time.Now()
+		},
+		DNSDone: func(_ httptrace.DNSDoneInfo) {
+			if !dnsStart.IsZero() {
+				timing.DNSLookup = time.Since(dnsStart)
+			}
+		},
+		ConnectStart: func(_, _ string) {
+			connectStart = time.Now()
+		},
+		ConnectDone: func(_, _ string, err error) {
+			if err == nil && !connectStart.IsZero() {
+				timing.TCPConnect = time.Since(connectStart)
+			}
+		},
+		TLSHandshakeStart: func() {
+			tlsStart = time.Now()
+		},
+		TLSHandshakeDone: func(_ tls.ConnectionState, _ error) {
+			if !tlsStart.IsZero() {
+				timing.TLSHandshake = time.Since(tlsStart)
+			}
+		},
+		GotFirstResponseByte: func() {
+			timing.FirstByte = time.Since(reqStart)
+		},
+	}
+
+	return req.WithContext(httptrace.WithClientTrace(req.Context(), trace))
 }
 
 func buildURL(baseURL string, params []domain.QueryParam) (string, error) {
