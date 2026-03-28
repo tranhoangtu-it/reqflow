@@ -4,12 +4,14 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/ye-kart/reqflow/internal/adapters/cli/output"
 	"github.com/ye-kart/reqflow/internal/app"
+	"github.com/ye-kart/reqflow/internal/core/variable"
 	"github.com/ye-kart/reqflow/internal/domain"
 )
 
@@ -140,11 +142,24 @@ func makeRunE(a *app.App, method domain.HTTPMethod, hasBody bool) func(cmd *cobr
 			config.Auth = authConfig
 		}
 
+		// Load environment variables if -e flag is set.
+		var vars map[string]string
+		envName, _ := cmd.Flags().GetString("env")
+		if envName != "" && a.Storage != nil {
+			envDir, _ := cmd.Flags().GetString("env-dir")
+			envPath := filepath.Join(envDir, envName+".yaml")
+			env, err := a.Storage.ReadEnvironment(envPath)
+			if err != nil {
+				return fmt.Errorf("loading environment %q: %w", envName, err)
+			}
+			vars = variable.Resolve(env.Variables)
+		}
+
 		// Execute the request.
 		ctx, cancel := context.WithTimeout(context.Background(), resolveTimeout(timeout))
 		defer cancel()
 
-		result, err := a.HTTPExecutor.Execute(ctx, config, nil)
+		result, err := a.HTTPExecutor.Execute(ctx, config, vars)
 		if err != nil {
 			return fmt.Errorf("request failed: %w", err)
 		}
