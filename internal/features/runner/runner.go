@@ -40,6 +40,8 @@ func (r *Runner) Run(ctx context.Context, wf domain.Workflow, initialVars map[st
 		var stepResult domain.StepResult
 		if step.Poll != nil {
 			stepResult = r.pollStep(ctx, step, vars)
+		} else if step.Retry != nil {
+			stepResult = r.retryStep(ctx, step, vars)
 		} else {
 			stepResult = r.executeStep(ctx, step, vars)
 		}
