@@ -2,6 +2,7 @@ package commands
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -11,6 +12,7 @@ import (
 	"github.com/ye-kart/reqflow/internal/adapters/cli/output"
 	"github.com/ye-kart/reqflow/internal/app"
 	"github.com/ye-kart/reqflow/internal/core/variable"
+	"github.com/ye-kart/reqflow/internal/core/workflow"
 	"github.com/ye-kart/reqflow/internal/domain"
 )
 
@@ -39,6 +41,16 @@ func addFailOnErrorFlag(cmd *cobra.Command) {
 	cmd.Flags().Bool("no-fail-on-error", false, "do not exit with non-zero code on HTTP 4xx/5xx")
 }
 
+// addExtractFlag adds the --extract flag for inline value extraction.
+func addExtractFlag(cmd *cobra.Command) {
+	cmd.Flags().StringSlice("extract", nil, `extract value from response (e.g. "$.field" or "name=$.field")`)
+}
+
+// addAssertFlag adds the --assert flag for inline response assertions.
+func addAssertFlag(cmd *cobra.Command) {
+	cmd.Flags().StringSlice("assert", nil, `assert response condition (e.g. "status == 200")`)
+}
+
 func newGetCommand(a *app.App) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "get <url>",
@@ -49,6 +61,8 @@ func newGetCommand(a *app.App) *cobra.Command {
 	addAuthFlags(cmd)
 	addCurlFlag(cmd)
 	addFailOnErrorFlag(cmd)
+	addExtractFlag(cmd)
+	addAssertFlag(cmd)
 	return cmd
 }
 
@@ -63,6 +77,8 @@ func newPostCommand(a *app.App) *cobra.Command {
 	addAuthFlags(cmd)
 	addCurlFlag(cmd)
 	addFailOnErrorFlag(cmd)
+	addExtractFlag(cmd)
+	addAssertFlag(cmd)
 	return cmd
 }
 
@@ -77,6 +93,8 @@ func newPutCommand(a *app.App) *cobra.Command {
 	addAuthFlags(cmd)
 	addCurlFlag(cmd)
 	addFailOnErrorFlag(cmd)
+	addExtractFlag(cmd)
+	addAssertFlag(cmd)
 	return cmd
 }
 
@@ -91,6 +109,8 @@ func newPatchCommand(a *app.App) *cobra.Command {
 	addAuthFlags(cmd)
 	addCurlFlag(cmd)
 	addFailOnErrorFlag(cmd)
+	addExtractFlag(cmd)
+	addAssertFlag(cmd)
 	return cmd
 }
 
@@ -104,6 +124,8 @@ func newDeleteCommand(a *app.App) *cobra.Command {
 	addAuthFlags(cmd)
 	addCurlFlag(cmd)
 	addFailOnErrorFlag(cmd)
+	addExtractFlag(cmd)
+	addAssertFlag(cmd)
 	return cmd
 }
 
@@ -218,16 +240,36 @@ func makeRunE(a *app.App, method domain.HTTPMethod, hasBody bool) func(cmd *cobr
 			return fmt.Errorf("request failed: %w", err)
 		}
 
-		// Verbose mode: show request and response details.
-		if verbose {
-			if err := output.FormatVerbose(w, result.Request, result.Response, noColor); err != nil {
+		// Check for --extract and --assert flags.
+		extractExprs, _ := cmd.Flags().GetStringSlice("extract")
+		assertExprs, _ := cmd.Flags().GetStringSlice("assert")
+		hasExtract := len(extractExprs) > 0
+		hasAssert := len(assertExprs) > 0
+
+		if hasExtract {
+			// Extract mode: skip normal response formatting.
+			if err := handleExtract(cmd, result.Response, extractExprs); err != nil {
 				return err
 			}
 		} else {
-			// Normal mode: format and write response.
-			outputFmt, _ := cmd.Flags().GetString("output")
-			formatter := output.New(domain.OutputFormat(outputFmt), noColor)
-			if err := formatter.FormatResponse(w, result.Response); err != nil {
+			// Verbose mode: show request and response details.
+			if verbose {
+				if err := output.FormatVerbose(w, result.Request, result.Response, noColor); err != nil {
+					return err
+				}
+			} else {
+				// Normal mode: format and write response.
+				outputFmt, _ := cmd.Flags().GetString("output")
+				formatter := output.New(domain.OutputFormat(outputFmt), noColor)
+				if err := formatter.FormatResponse(w, result.Response); err != nil {
+					return err
+				}
+			}
+		}
+
+		// Assertions are evaluated AFTER extract.
+		if hasAssert {
+			if err := handleAssert(cmd, result.Response, assertExprs); err != nil {
 				return err
 			}
 		}
@@ -373,4 +415,107 @@ func resolveTimeout(d time.Duration) time.Duration {
 		return d
 	}
 	return 30 * time.Second
+}
+
+// handleExtract processes --extract flags, extracts values from the response
+// body, and prints them. When --output json is set, output is a JSON object.
+func handleExtract(cmd *cobra.Command, resp domain.HTTPResponse, exprs []string) error {
+	w := cmd.OutOrStdout()
+
+	// Build extraction map from expressions.
+	extractMap := make(map[string]string)
+	// Track insertion order for deterministic text output.
+	type extractEntry struct {
+		varName  string
+		jsonPath string
+	}
+	var entries []extractEntry
+
+	for _, expr := range exprs {
+		varName, jsonPath, err := workflow.ParseExtractString(expr)
+		if err != nil {
+			return fmt.Errorf("invalid --extract %q: %w", expr, err)
+		}
+		// Use the jsonPath as key if no label is given.
+		key := varName
+		if key == "" {
+			key = jsonPath
+		}
+		extractMap[key] = jsonPath
+		entries = append(entries, extractEntry{varName: varName, jsonPath: jsonPath})
+	}
+
+	values, err := workflow.ExtractValues(resp.Body, extractMap)
+	if err != nil {
+		return fmt.Errorf("extraction failed: %w", err)
+	}
+
+	// Check if JSON output is requested.
+	outputFmt, _ := cmd.Flags().GetString("output")
+	if domain.OutputFormat(outputFmt) == domain.OutputJSON {
+		// Build a clean map with labels as keys.
+		jsonOut := make(map[string]string, len(entries))
+		for _, e := range entries {
+			key := e.varName
+			if key == "" {
+				key = e.jsonPath
+			}
+			jsonOut[key] = values[key]
+		}
+		enc := json.NewEncoder(w)
+		enc.SetIndent("", "  ")
+		return enc.Encode(jsonOut)
+	}
+
+	// Text output: one value per line.
+	for _, e := range entries {
+		key := e.varName
+		if key == "" {
+			key = e.jsonPath
+		}
+		val := values[key]
+		if e.varName != "" {
+			fmt.Fprintf(w, "%s=%s\n", e.varName, val)
+		} else {
+			fmt.Fprintln(w, val)
+		}
+	}
+
+	return nil
+}
+
+// handleAssert processes --assert flags, evaluates assertions against the
+// response, and prints results. Returns an AssertionError if any fail.
+func handleAssert(cmd *cobra.Command, resp domain.HTTPResponse, exprs []string) error {
+	w := cmd.OutOrStdout()
+
+	var assertions []domain.Assertion
+	for _, expr := range exprs {
+		a, err := workflow.ParseAssertionString(expr)
+		if err != nil {
+			return fmt.Errorf("invalid --assert %q: %w", expr, err)
+		}
+		assertions = append(assertions, a)
+	}
+
+	results := workflow.EvaluateAssertions(assertions, resp)
+
+	anyFailed := false
+	for _, r := range results {
+		if r.Passed {
+			fmt.Fprintf(w, "\u2713 %s %s %v\n", r.Assertion.Field, r.Assertion.Operator, r.Assertion.Expected)
+		} else {
+			anyFailed = true
+			fmt.Fprintf(w, "\u2717 %s %s %v\n", r.Assertion.Field, r.Assertion.Operator, r.Assertion.Expected)
+			if r.Message != "" {
+				fmt.Fprintf(w, "  %s\n", r.Message)
+			}
+		}
+	}
+
+	if anyFailed {
+		return domain.NewAssertionError("one or more assertions failed")
+	}
+
+	return nil
 }
