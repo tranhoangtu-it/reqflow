@@ -14,9 +14,10 @@ const (
 
 // AppConfig holds global application configuration.
 type AppConfig struct {
-	Timeout  time.Duration
-	DataDir  string
-	LogLevel string
-	NoColor  bool
-	Output   OutputFormat
+	Timeout        time.Duration
+	DataDir        string
+	LogLevel       string
+	NoColor        bool
+	Output         OutputFormat
+	DefaultHeaders []Header
 }
