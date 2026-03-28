@@ -8,7 +8,11 @@ import (
 	"time"
 
 	"github.com/ye-kart/reqflow/internal/domain"
+	"github.com/ye-kart/reqflow/internal/ports/driven"
 )
+
+// Compile-time check that Client satisfies the driven.HTTPClient interface.
+var _ driven.HTTPClient = (*Client)(nil)
 
 const defaultTimeout = 30 * time.Second
 
