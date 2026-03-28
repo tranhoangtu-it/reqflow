@@ -32,5 +32,8 @@ func NewRootCommand(a *app.App) *cobra.Command {
 	root.AddCommand(newPatchCommand(a))
 	root.AddCommand(newDeleteCommand(a))
 
+	// Register environment management subcommand.
+	root.AddCommand(newEnvCommand(a))
+
 	return root
 }
