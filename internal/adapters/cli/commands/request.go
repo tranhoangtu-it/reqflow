@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -11,6 +12,7 @@ import (
 	"github.com/ye-kart/reqflow/internal/adapters/cli/output"
 	"github.com/ye-kart/reqflow/internal/app"
 	"github.com/ye-kart/reqflow/internal/core/variable"
+	"github.com/ye-kart/reqflow/internal/core/workflow"
 	"github.com/ye-kart/reqflow/internal/domain"
 )
 
@@ -26,6 +28,13 @@ func addAuthFlags(cmd *cobra.Command) {
 	cmd.Flags().String("auth-bearer", "", "bearer token")
 	cmd.Flags().String("auth-apikey-header", "", `API key in header (format "HeaderName:Value")`)
 	cmd.Flags().String("auth-apikey-query", "", `API key in query (format "paramName=Value")`)
+}
+
+// addRetryFlags adds retry-related flags to a command.
+func addRetryFlags(cmd *cobra.Command) {
+	cmd.Flags().Int("retry", 0, "max number of retries")
+	cmd.Flags().String("retry-backoff", "fixed", `backoff strategy: "fixed", "linear", "exponential"`)
+	cmd.Flags().String("retry-on", "", "comma-separated HTTP status codes to retry on (e.g., 502,503,504)")
 }
 
 // addCurlFlag adds the --curl flag for exporting instead of executing.
@@ -49,6 +58,7 @@ func newGetCommand(a *app.App) *cobra.Command {
 	addAuthFlags(cmd)
 	addCurlFlag(cmd)
 	addFailOnErrorFlag(cmd)
+	addRetryFlags(cmd)
 	return cmd
 }
 
@@ -63,6 +73,7 @@ func newPostCommand(a *app.App) *cobra.Command {
 	addAuthFlags(cmd)
 	addCurlFlag(cmd)
 	addFailOnErrorFlag(cmd)
+	addRetryFlags(cmd)
 	return cmd
 }
 
@@ -77,6 +88,7 @@ func newPutCommand(a *app.App) *cobra.Command {
 	addAuthFlags(cmd)
 	addCurlFlag(cmd)
 	addFailOnErrorFlag(cmd)
+	addRetryFlags(cmd)
 	return cmd
 }
 
@@ -91,6 +103,7 @@ func newPatchCommand(a *app.App) *cobra.Command {
 	addAuthFlags(cmd)
 	addCurlFlag(cmd)
 	addFailOnErrorFlag(cmd)
+	addRetryFlags(cmd)
 	return cmd
 }
 
@@ -104,6 +117,7 @@ func newDeleteCommand(a *app.App) *cobra.Command {
 	addAuthFlags(cmd)
 	addCurlFlag(cmd)
 	addFailOnErrorFlag(cmd)
+	addRetryFlags(cmd)
 	return cmd
 }
 
@@ -209,11 +223,22 @@ func makeRunE(a *app.App, method domain.HTTPMethod, hasBody bool) func(cmd *cobr
 			a.EnableTrace()
 		}
 
-		// Execute the request.
+		// Parse retry flags.
+		retryCfg, err := parseRetryFlags(cmd)
+		if err != nil {
+			return err
+		}
+
+		// Execute the request (with retry if configured).
 		ctx, cancel := context.WithTimeout(context.Background(), resolveTimeout(timeout))
 		defer cancel()
 
-		result, err := a.HTTPExecutor.Execute(ctx, config, vars)
+		var result domain.ExecutionResult
+		if retryCfg != nil {
+			result, err = executeWithRetry(ctx, a, config, vars, retryCfg)
+		} else {
+			result, err = a.HTTPExecutor.Execute(ctx, config, vars)
+		}
 		if err != nil {
 			return fmt.Errorf("request failed: %w", err)
 		}
@@ -373,4 +398,85 @@ func resolveTimeout(d time.Duration) time.Duration {
 		return d
 	}
 	return 30 * time.Second
+}
+
+// parseRetryFlags reads retry-related flags and returns a RetryConfig if --retry is set.
+func parseRetryFlags(cmd *cobra.Command) (*domain.RetryConfig, error) {
+	retryMax, _ := cmd.Flags().GetInt("retry")
+	if retryMax <= 0 {
+		return nil, nil
+	}
+
+	backoff, _ := cmd.Flags().GetString("retry-backoff")
+	retryOnStr, _ := cmd.Flags().GetString("retry-on")
+
+	var retryOn []int
+	if retryOnStr != "" {
+		for _, s := range strings.Split(retryOnStr, ",") {
+			s = strings.TrimSpace(s)
+			code, err := strconv.Atoi(s)
+			if err != nil {
+				return nil, fmt.Errorf("invalid status code in --retry-on: %q", s)
+			}
+			retryOn = append(retryOn, code)
+		}
+	}
+
+	return &domain.RetryConfig{
+		Max:          retryMax,
+		Backoff:      backoff,
+		InitialDelay: 1 * time.Second,
+		RetryOn:      retryOn,
+		RetryOnError: true,
+	}, nil
+}
+
+// executeWithRetry wraps the HTTP executor with retry logic for CLI commands.
+func executeWithRetry(ctx context.Context, a *app.App, config domain.RequestConfig, vars map[string]string, cfg *domain.RetryConfig) (domain.ExecutionResult, error) {
+	var lastResult domain.ExecutionResult
+	var lastErr error
+
+	for attempt := 0; attempt <= cfg.Max; attempt++ {
+		if attempt > 0 {
+			delay := workflow.CalculateDelay(cfg.Backoff, attempt, cfg.InitialDelay)
+			if cfg.Jitter {
+				delay = workflow.ApplyJitter(delay)
+			}
+
+			select {
+			case <-ctx.Done():
+				return lastResult, fmt.Errorf("retry cancelled: %w", ctx.Err())
+			case <-time.After(delay):
+			}
+		}
+
+		lastResult, lastErr = a.HTTPExecutor.Execute(ctx, config, vars)
+
+		// Network error: retry if configured
+		if lastErr != nil {
+			if cfg.RetryOnError && attempt < cfg.Max {
+				continue
+			}
+			return lastResult, lastErr
+		}
+
+		// Check if status code is retryable
+		if shouldRetryStatusCode(lastResult.Response.StatusCode, cfg.RetryOn) && attempt < cfg.Max {
+			continue
+		}
+
+		return lastResult, nil
+	}
+
+	return lastResult, lastErr
+}
+
+// shouldRetryStatusCode checks if the given status code is in the retryable list.
+func shouldRetryStatusCode(statusCode int, retryOn []int) bool {
+	for _, code := range retryOn {
+		if statusCode == code {
+			return true
+		}
+	}
+	return false
 }
