@@ -25,6 +25,8 @@ A comprehensive CLI tool with full Postman-equivalent capabilities.
 17. [Performance Testing](#17-performance-testing)
 18. [CLI-Specific Features](#18-cli-specific-features)
 19. [Collaboration & Sharing](#19-collaboration--sharing)
+20. [Async Workflow Engine](#20-async-workflow-engine)
+21. [AI Agent Integration](#21-ai-agent-integration)
 
 ---
 
@@ -566,7 +568,157 @@ http perf <collection> [flags]
 
 ---
 
+## 20. Async Workflow Engine
+
+The async workflow engine is a core differentiator — no existing CLI tool handles multi-step async API testing well.
+
+### Workflow Definition (YAML)
+- Declarative multi-step workflow files
+- Step sequencing with named references
+- Variable extraction and forwarding between steps
+- Conditional step execution (`when:` clauses)
+- Workflow-level and step-level timeouts
+
+### Poll-Until-Ready
+- Poll an endpoint at a configurable interval
+- Condition-based completion (`until: "$.status == 'completed'"`)
+- Configurable timeout with clear failure messages
+- Exponential or fixed interval polling
+- Extract data from final successful response
+
+```yaml
+- name: wait-for-job
+  method: GET
+  url: "{{base_url}}/jobs/{{job_id}}"
+  poll:
+    interval: 2s
+    timeout: 60s
+    until: "$.status == 'completed'"
+```
+
+### Webhook Listener
+- Start a temporary local HTTP server to receive callbacks
+- Capture incoming request body as a variable
+- Configurable path, port, and timeout
+- Correlate webhook payload with the triggering request
+- Support for multiple concurrent listeners
+
+```yaml
+- name: listen-for-callback
+  listen:
+    port: 8888
+    path: /webhook
+    timeout: 30s
+    capture: webhook_payload
+```
+
+### Parallel Execution with Dependencies
+- Run independent steps in parallel (`parallel:` block)
+- Steps after a parallel block wait for all parallel steps to complete
+- Variable extraction from each parallel step available downstream
+- Fail-fast or collect-all-errors modes
+- Concurrency limit configuration
+
+```yaml
+- name: create-resources
+  parallel:
+    - name: create-user
+      method: POST
+      url: "{{base_url}}/users"
+      extract: { user_id: "$.id" }
+    - name: create-org
+      method: POST
+      url: "{{base_url}}/orgs"
+      extract: { org_id: "$.id" }
+
+- name: assign-user-to-org
+  method: POST
+  url: "{{base_url}}/orgs/{{org_id}}/members"
+  body:
+    user_id: "{{user_id}}"
+```
+
+### Retry with Backoff
+- Configurable max retry count
+- Backoff strategies: fixed, linear, exponential
+- Retry on specific status codes or error conditions
+- Jitter support to avoid thundering herd
+- Per-step retry configuration
+
+```yaml
+- name: flaky-endpoint
+  method: GET
+  url: "{{base_url}}/eventual-consistency"
+  retry:
+    max: 5
+    backoff: exponential
+    retry_on: [502, 503, 504]
+```
+
+### Delay and Timing Control
+- Fixed delay between steps (`delay: 5s`)
+- Delay after specific steps
+- Workflow-level default delay
+
+### Workflow Composition
+- Include/reference other workflow files (`include: ./auth-flow.yaml`)
+- Reusable workflow fragments (login flows, setup/teardown)
+- Parameterized workflows (pass variables at invocation)
+
+### Workflow Execution & Reporting
+- Step-by-step execution log with timing
+- Variable state snapshot at each step
+- Clear indication of which step failed and why
+- Export workflow results to JSON/JUnit
+- Dry-run mode to validate workflow without executing
+
+---
+
+## 21. AI Agent Integration
+
+First-class support for usage by AI agents (Claude, GPT, Copilot, etc.).
+
+### Structured Output
+- All output available as machine-parseable JSON (`--output json`)
+- Consistent schema across all commands
+- Error responses include structured error codes and messages
+- Response metadata (timing, size, headers) always available in JSON mode
+
+### Declarative Request Files
+- YAML/JSON request definitions that agents can read, write, and modify
+- No need to construct complex CLI flags — just point to a file
+- Schema validation for request files with clear error messages
+
+### Predictable Exit Codes
+| Code | Meaning |
+|------|---------|
+| 0 | Success (2xx response) |
+| 1 | HTTP error (4xx/5xx response) |
+| 2 | Network/connection error |
+| 3 | Timeout |
+| 4 | Assertion failure |
+| 5 | Configuration/validation error |
+| 6 | Workflow step failure |
+
+### Agent-Friendly Features
+- `--quiet` mode: suppress all non-essential output
+- `--extract "$.data.id"` : extract a single value from response (for piping into next command)
+- `--assert "status == 200"` : inline assertion with clear pass/fail exit code
+- `--wait-for "$.status == 'ready'" --poll 2s --timeout 60s` : inline polling
+- Collections and environments as plain files — agents can read/modify them directly
+- No interactive prompts in non-TTY mode (auto-detected)
+
+### Workflow as Code
+- AI agents can generate workflow YAML files
+- Run workflows with `reqflow run workflow.yaml`
+- Structured results enable agents to reason about failures and retry
+
+---
+
 ## Implementation Priority
+
+> **Note**: Async Workflows and AI Agent Integration are promoted to Phase 2
+> as they represent the core differentiators of reqflow.
 
 ### Phase 1 - MVP (Core CLI)
 - Basic HTTP methods (GET, POST, PUT, PATCH, DELETE)
@@ -580,7 +732,19 @@ http perf <collection> [flags]
 - Verbose/debug output modes
 - Shell completions
 
-### Phase 2 - Collections & Scripting
+### Phase 2 - Async Workflows & AI Agent Support
+- Structured JSON output for all commands (`--output json`)
+- Predictable exit codes
+- Multi-step workflow engine (YAML definition)
+- Poll-until-ready with configurable interval/timeout
+- Retry with backoff (fixed, exponential)
+- Parallel step execution with dependencies
+- Variable extraction and chaining between steps
+- Inline assertions (`--assert`) and extraction (`--extract`)
+- Webhook listener for async callbacks
+- Workflow results reporting (JSON/JUnit)
+
+### Phase 3 - Collections & Scripting
 - Collection and folder management
 - Collection runner with sequential execution
 - Pre-request and post-response JavaScript scripts
@@ -590,7 +754,7 @@ http perf <collection> [flags]
 - Cookie management
 - OpenAPI/Swagger import
 
-### Phase 3 - Advanced Features
+### Phase 4 - Advanced Features
 - Mock servers
 - Monitoring and scheduled runs
 - WebSocket support
@@ -600,7 +764,7 @@ http perf <collection> [flags]
 - API documentation generation
 - Interactive REPL mode
 
-### Phase 4 - Ecosystem
+### Phase 5 - Ecosystem
 - Plugin/extension system
 - Full import/export format support
 - Advanced proxy and certificate management
