@@ -19,6 +19,14 @@ type RetryConfig struct {
 	Jitter       bool          // add random jitter
 }
 
+// ListenConfig defines a webhook listener that waits for an async callback.
+type ListenConfig struct {
+	Port    int           // port to listen on
+	Path    string        // path to match (e.g., /webhook)
+	Timeout time.Duration // max wait time for callback
+	Capture string        // variable name to store received body
+}
+
 // Step represents a single HTTP request within a workflow.
 // A step may contain a Parallel block of sub-steps that execute concurrently.
 type Step struct {
@@ -36,6 +44,7 @@ type Step struct {
 	Parallel    []Step // sub-steps to run in parallel
 	MaxParallel int    // concurrency limit (0 = unlimited)
 	FailFast    bool   // cancel remaining on first failure (default true)
+	Listen      *ListenConfig // optional webhook listener for async callbacks
 }
 
 // PollConfig configures poll-until-ready behavior for async endpoints.

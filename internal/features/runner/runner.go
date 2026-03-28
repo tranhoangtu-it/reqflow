@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/ye-kart/reqflow/internal/core/variable"
@@ -36,63 +37,174 @@ func (r *Runner) Run(ctx context.Context, wf domain.Workflow, initialVars map[st
 		Name: wf.Name,
 	}
 
-	for _, step := range wf.Steps {
-		var stepResults []domain.StepResult
-		var extractedVars map[string]string
+	for i := 0; i < len(wf.Steps); i++ {
+		step := wf.Steps[i]
 
+		// Handle listen steps: start webhook listener and run next step concurrently
+		if step.Listen != nil {
+			listenResult, triggerResult, skip := r.executeListenStep(ctx, step, wf.Steps, i, vars)
+
+			if stop := accumulateResult(&result, listenResult, vars); stop {
+				break
+			}
+
+			// If we ran the next step concurrently, record it too
+			if triggerResult != nil {
+				if stop := accumulateResult(&result, *triggerResult, vars); stop {
+					break
+				}
+				i += skip
+			}
+
+			continue
+		}
+
+		// Handle parallel steps
 		if len(step.Parallel) > 0 {
 			subResults, mergedVars, err := r.runParallel(ctx, step, vars)
 			if err != nil {
 				break
 			}
-			stepResults = subResults
-			extractedVars = mergedVars
-		} else if step.Poll != nil {
-			sr := r.pollStep(ctx, step, vars)
-			stepResults = []domain.StepResult{sr}
-			extractedVars = sr.Extracted
-		} else if step.Retry != nil {
-			sr := r.retryStep(ctx, step, vars)
-			stepResults = []domain.StepResult{sr}
-			extractedVars = sr.Extracted
-		} else {
-			sr := r.executeStep(ctx, step, vars)
-			stepResults = []domain.StepResult{sr}
-			extractedVars = sr.Extracted
-		}
-
-		// Collect results and count assertions
-		hasError := false
-		for _, sr := range stepResults {
-			result.Steps = append(result.Steps, sr)
-			if sr.Error != nil {
-				hasError = true
-			}
-			for _, ar := range sr.Assertions {
-				if ar.Passed {
-					result.TotalPassed++
-				} else {
-					result.TotalFailed++
+			hasError := false
+			for _, sr := range subResults {
+				if stop := accumulateResult(&result, sr, vars); stop {
+					hasError = true
 				}
 			}
+			// Merge parallel extracted vars
+			for k, v := range mergedVars {
+				vars[k] = v
+			}
+			if hasError {
+				break
+			}
+			continue
 		}
 
-		if hasError {
-			break
+		// Handle poll steps
+		if step.Poll != nil {
+			sr := r.pollStep(ctx, step, vars)
+			if stop := accumulateResult(&result, sr, vars); stop {
+				break
+			}
+			continue
 		}
 
-		// Merge extracted variables for subsequent steps
-		for k, v := range extractedVars {
-			vars[k] = v
+		// Handle retry steps
+		if step.Retry != nil {
+			sr := r.retryStep(ctx, step, vars)
+			if stop := accumulateResult(&result, sr, vars); stop {
+				break
+			}
+			continue
 		}
 
-		if result.TotalFailed > 0 {
+		// Default: execute step normally
+		stepResult := r.executeStep(ctx, step, vars)
+		if stop := accumulateResult(&result, stepResult, vars); stop {
 			break
 		}
 	}
 
 	result.Duration = time.Since(start)
 	return result, nil
+}
+
+// accumulateResult appends a step result to the workflow result, counts assertions,
+// merges extracted variables, and returns true if execution should stop.
+func accumulateResult(result *domain.WorkflowResult, sr domain.StepResult, vars map[string]string) bool {
+	result.Steps = append(result.Steps, sr)
+
+	for _, ar := range sr.Assertions {
+		if ar.Passed {
+			result.TotalPassed++
+		} else {
+			result.TotalFailed++
+		}
+	}
+
+	if sr.Error != nil {
+		return true
+	}
+
+	for k, v := range sr.Extracted {
+		vars[k] = v
+	}
+
+	return result.TotalFailed > 0
+}
+
+// executeListenStep handles a step with Listen config. It starts the webhook
+// listener, runs the next step concurrently (if available), and waits for
+// the callback. Returns the listen step result, an optional trigger step
+// result, and the number of extra steps consumed.
+func (r *Runner) executeListenStep(ctx context.Context, step domain.Step, steps []domain.Step, idx int, vars map[string]string) (domain.StepResult, *domain.StepResult, int) {
+	start := time.Now()
+
+	listenResult := domain.StepResult{
+		StepName:  step.Name,
+		Extracted: make(map[string]string),
+	}
+
+	listener := NewWebhookListener(*step.Listen)
+	resultCh, err := listener.Start(ctx)
+	if err != nil {
+		listenResult.Error = fmt.Errorf("starting webhook listener: %w", err)
+		listenResult.Duration = time.Since(start)
+		return listenResult, nil, 0
+	}
+
+	// Store the listener port so the next step can reference it
+	port := listener.Port()
+	vars["listen_port"] = strconv.Itoa(port)
+
+	// If there's a next step, run it concurrently (it's the trigger)
+	var triggerResult *domain.StepResult
+	skip := 0
+	if idx+1 < len(steps) {
+		nextStep := steps[idx+1]
+		skip = 1
+
+		// Run the next step in a goroutine
+		triggerCh := make(chan domain.StepResult, 1)
+		go func() {
+			triggerCh <- r.executeStep(ctx, nextStep, vars)
+		}()
+
+		// Wait for the webhook callback
+		webhookResult := <-resultCh
+		listener.Stop()
+
+		if webhookResult.Error != nil {
+			listenResult.Error = fmt.Errorf("webhook listener: %w", webhookResult.Error)
+			listenResult.Duration = time.Since(start)
+			return listenResult, nil, skip
+		}
+
+		// Store captured body as the configured variable
+		listenResult.Extracted[step.Listen.Capture] = string(webhookResult.Body)
+		listenResult.Duration = time.Since(start)
+
+		// Wait for the trigger step to complete
+		tr := <-triggerCh
+		triggerResult = &tr
+
+		return listenResult, triggerResult, skip
+	}
+
+	// No next step - just wait for the callback
+	webhookResult := <-resultCh
+	listener.Stop()
+
+	if webhookResult.Error != nil {
+		listenResult.Error = fmt.Errorf("webhook listener: %w", webhookResult.Error)
+		listenResult.Duration = time.Since(start)
+		return listenResult, nil, 0
+	}
+
+	listenResult.Extracted[step.Listen.Capture] = string(webhookResult.Body)
+	listenResult.Duration = time.Since(start)
+	return listenResult, nil, 0
 }
 
 func (r *Runner) executeStep(ctx context.Context, step domain.Step, vars map[string]string) domain.StepResult {
