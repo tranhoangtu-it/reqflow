@@ -11,6 +11,7 @@ import (
 	"github.com/ye-kart/reqflow/internal/adapters/cli/output"
 	"github.com/ye-kart/reqflow/internal/app"
 	"github.com/ye-kart/reqflow/internal/core/variable"
+	"github.com/ye-kart/reqflow/internal/core/workflow"
 	"github.com/ye-kart/reqflow/internal/domain"
 )
 
@@ -33,6 +34,13 @@ func addCurlFlag(cmd *cobra.Command) {
 	cmd.Flags().Bool("curl", false, "print the equivalent cURL command instead of executing")
 }
 
+// addPollFlags adds polling flags to a command.
+func addPollFlags(cmd *cobra.Command) {
+	cmd.Flags().String("wait-for", "", `poll until JSONPath condition is met (e.g. "$.status == 'completed'")`)
+	cmd.Flags().Duration("poll", 2*time.Second, "interval between poll attempts")
+	cmd.Flags().Duration("poll-timeout", 60*time.Second, "maximum time to wait for condition")
+}
+
 // addFailOnErrorFlag adds the --fail-on-error and --no-fail-on-error flags.
 func addFailOnErrorFlag(cmd *cobra.Command) {
 	cmd.Flags().Bool("fail-on-error", true, "exit with non-zero code on HTTP 4xx/5xx")
@@ -49,6 +57,7 @@ func newGetCommand(a *app.App) *cobra.Command {
 	addAuthFlags(cmd)
 	addCurlFlag(cmd)
 	addFailOnErrorFlag(cmd)
+	addPollFlags(cmd)
 	return cmd
 }
 
@@ -63,6 +72,7 @@ func newPostCommand(a *app.App) *cobra.Command {
 	addAuthFlags(cmd)
 	addCurlFlag(cmd)
 	addFailOnErrorFlag(cmd)
+	addPollFlags(cmd)
 	return cmd
 }
 
@@ -77,6 +87,7 @@ func newPutCommand(a *app.App) *cobra.Command {
 	addAuthFlags(cmd)
 	addCurlFlag(cmd)
 	addFailOnErrorFlag(cmd)
+	addPollFlags(cmd)
 	return cmd
 }
 
@@ -91,6 +102,7 @@ func newPatchCommand(a *app.App) *cobra.Command {
 	addAuthFlags(cmd)
 	addCurlFlag(cmd)
 	addFailOnErrorFlag(cmd)
+	addPollFlags(cmd)
 	return cmd
 }
 
@@ -104,6 +116,7 @@ func newDeleteCommand(a *app.App) *cobra.Command {
 	addAuthFlags(cmd)
 	addCurlFlag(cmd)
 	addFailOnErrorFlag(cmd)
+	addPollFlags(cmd)
 	return cmd
 }
 
@@ -207,6 +220,12 @@ func makeRunE(a *app.App, method domain.HTTPMethod, hasBody bool) func(cmd *cobr
 		// Enable trace timing if requested.
 		if trace {
 			a.EnableTrace()
+		}
+
+		// Check for polling flags.
+		waitFor, _ := cmd.Flags().GetString("wait-for")
+		if waitFor != "" {
+			return executePollRequest(cmd, a, config, vars, waitFor, verbose, trace, noColor, timeout)
 		}
 
 		// Execute the request.
@@ -373,4 +392,76 @@ func resolveTimeout(d time.Duration) time.Duration {
 		return d
 	}
 	return 30 * time.Second
+}
+
+// executePollRequest handles the --wait-for polling execution path.
+func executePollRequest(cmd *cobra.Command, a *app.App, config domain.RequestConfig, vars map[string]string, waitFor string, verbose, trace, noColor bool, timeout time.Duration) error {
+	pollInterval, _ := cmd.Flags().GetDuration("poll")
+	pollTimeout, _ := cmd.Flags().GetDuration("poll-timeout")
+
+	pollCtx, cancel := context.WithTimeout(context.Background(), pollTimeout)
+	defer cancel()
+
+	w := cmd.OutOrStdout()
+	attempt := 0
+
+	for {
+		attempt++
+
+		// Use per-request timeout if set, otherwise use a reasonable default
+		reqCtx, reqCancel := context.WithTimeout(pollCtx, resolveTimeout(timeout))
+		result, err := a.HTTPExecutor.Execute(reqCtx, config, vars)
+		reqCancel()
+
+		if err != nil {
+			if pollCtx.Err() != nil {
+				return fmt.Errorf("polling timed out after %d attempts", attempt)
+			}
+			return fmt.Errorf("poll request failed: %w", err)
+		}
+
+		// Check condition
+		conditionMet, condErr := workflow.EvaluateCondition(result.Response.Body, waitFor)
+		if condErr != nil {
+			return fmt.Errorf("evaluating poll condition: %w", condErr)
+		}
+
+		if conditionMet {
+			// Output the final successful response
+			if verbose {
+				if err := output.FormatVerbose(w, result.Request, result.Response, noColor); err != nil {
+					return err
+				}
+			} else {
+				outputFmt, _ := cmd.Flags().GetString("output")
+				formatter := output.New(domain.OutputFormat(outputFmt), noColor)
+				if err := formatter.FormatResponse(w, result.Response); err != nil {
+					return err
+				}
+			}
+
+			if trace {
+				fmt.Fprintln(w)
+				if err := output.FormatTrace(w, result.Response.Timing, noColor); err != nil {
+					return err
+				}
+			}
+
+			if result.Response.StatusCode >= 400 {
+				if shouldFailOnError(cmd) {
+					return domain.NewHTTPError(result.Response.StatusCode, nil)
+				}
+			}
+
+			return nil
+		}
+
+		// Wait for the next poll interval or context cancellation
+		select {
+		case <-pollCtx.Done():
+			return fmt.Errorf("polling timed out after %d attempts", attempt)
+		case <-time.After(pollInterval):
+			// Continue to next attempt
+		}
+	}
 }

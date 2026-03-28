@@ -499,3 +499,82 @@ func TestGetCommand_500_ReturnsExitError(t *testing.T) {
 		t.Errorf("Code = %d, want %d", exitErr.Code, domain.ExitHTTPError)
 	}
 }
+
+func TestGetCommand_WaitForFlag_TriggersPolling(t *testing.T) {
+	callCount := 0
+	mock := &mockHTTPClient{
+		doFunc: func(_ context.Context, req domain.HTTPRequest) (domain.HTTPResponse, error) {
+			callCount++
+			if callCount < 3 {
+				return domain.HTTPResponse{
+					StatusCode: 200,
+					Body:       []byte(`{"status":"pending"}`),
+				}, nil
+			}
+			return domain.HTTPResponse{
+				StatusCode: 200,
+				Body:       []byte(`{"status":"completed"}`),
+			}, nil
+		},
+	}
+
+	a := newTestApp(mock)
+	root := commands.NewRootCommand(a)
+
+	buf := new(bytes.Buffer)
+	root.SetOut(buf)
+	root.SetErr(buf)
+	root.SetArgs([]string{
+		"get", "https://example.com/jobs/1",
+		"--wait-for", "$.status == 'completed'",
+		"--poll", "10ms",
+		"--poll-timeout", "5s",
+		"--no-fail-on-error",
+	})
+
+	err := root.Execute()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if callCount < 3 {
+		t.Errorf("expected at least 3 poll attempts, got %d", callCount)
+	}
+
+	output := buf.String()
+	if !strings.Contains(output, "completed") {
+		t.Errorf("expected output to contain final 'completed' response, got:\n%s", output)
+	}
+}
+
+func TestGetCommand_WaitForFlag_PollTimeout(t *testing.T) {
+	mock := &mockHTTPClient{
+		doFunc: func(_ context.Context, req domain.HTTPRequest) (domain.HTTPResponse, error) {
+			return domain.HTTPResponse{
+				StatusCode: 200,
+				Body:       []byte(`{"status":"pending"}`),
+			}, nil
+		},
+	}
+
+	a := newTestApp(mock)
+	root := commands.NewRootCommand(a)
+
+	buf := new(bytes.Buffer)
+	root.SetOut(buf)
+	root.SetErr(buf)
+	root.SetArgs([]string{
+		"get", "https://example.com/jobs/1",
+		"--wait-for", "$.status == 'completed'",
+		"--poll", "10ms",
+		"--poll-timeout", "50ms",
+	})
+
+	err := root.Execute()
+	if err == nil {
+		t.Fatal("expected timeout error, got nil")
+	}
+	if !strings.Contains(err.Error(), "timed out") {
+		t.Errorf("expected timeout error message, got: %v", err)
+	}
+}
