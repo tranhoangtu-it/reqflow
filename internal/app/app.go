@@ -24,6 +24,11 @@ func New(httpClient driven.HTTPClient, storage driven.Storage) *App {
 	}
 }
 
+// HTTPClient returns the underlying HTTP client adapter.
+func (a *App) HTTPClient() driven.HTTPClient {
+	return a.httpClient
+}
+
 // EnableTrace enables detailed timing instrumentation on the HTTP client,
 // if the client supports it.
 func (a *App) EnableTrace() {

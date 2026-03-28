@@ -10,7 +10,6 @@ import (
 	"github.com/ye-kart/reqflow/internal/adapters/cli/commands"
 	"github.com/ye-kart/reqflow/internal/app"
 	"github.com/ye-kart/reqflow/internal/domain"
-	featurehttp "github.com/ye-kart/reqflow/internal/features/http"
 )
 
 // mockHTTPClient implements driven.HTTPClient for CLI testing.
@@ -23,9 +22,7 @@ func (m *mockHTTPClient) Do(ctx context.Context, req domain.HTTPRequest) (domain
 }
 
 func newTestApp(mock *mockHTTPClient) *app.App {
-	return &app.App{
-		HTTPExecutor: featurehttp.NewExecutor(mock),
-	}
+	return app.New(mock, nil)
 }
 
 func TestGetCommand_ParsesURLFromArgs(t *testing.T) {
@@ -235,6 +232,185 @@ func TestAuthBearerFlag_ParsedCorrectly(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("expected Authorization: Bearer my-jwt-token, got headers: %v", capturedReq.Headers)
+	}
+}
+
+func TestAuthDigestFlag_ParsedCorrectly(t *testing.T) {
+	var capturedReq domain.HTTPRequest
+	mock := &mockHTTPClient{
+		doFunc: func(_ context.Context, req domain.HTTPRequest) (domain.HTTPResponse, error) {
+			capturedReq = req
+			return domain.HTTPResponse{StatusCode: 200, Body: []byte("ok")}, nil
+		},
+	}
+
+	a := newTestApp(mock)
+	root := commands.NewRootCommand(a)
+
+	buf := new(bytes.Buffer)
+	root.SetOut(buf)
+	root.SetErr(buf)
+	root.SetArgs([]string{"get", "https://example.com/api", "--auth-digest", "admin:s3cret"})
+
+	err := root.Execute()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Digest auth does not add an Authorization header on the first pass
+	// (it needs a 401 challenge first), but the request should still succeed.
+	_ = capturedReq
+}
+
+func TestAuthDigestFlag_InvalidFormat(t *testing.T) {
+	mock := &mockHTTPClient{
+		doFunc: func(_ context.Context, req domain.HTTPRequest) (domain.HTTPResponse, error) {
+			return domain.HTTPResponse{StatusCode: 200, Body: []byte("ok")}, nil
+		},
+	}
+
+	a := newTestApp(mock)
+	root := commands.NewRootCommand(a)
+
+	buf := new(bytes.Buffer)
+	root.SetOut(buf)
+	root.SetErr(buf)
+	root.SetArgs([]string{"get", "https://example.com/api", "--auth-digest", "nocolon"})
+
+	err := root.Execute()
+	if err == nil {
+		t.Fatal("expected error for invalid --auth-digest format, got nil")
+	}
+	if !strings.Contains(err.Error(), "auth-digest") {
+		t.Errorf("error should mention --auth-digest: %v", err)
+	}
+}
+
+func TestAuthAWSFlag_ParsedCorrectly(t *testing.T) {
+	var capturedReq domain.HTTPRequest
+	mock := &mockHTTPClient{
+		doFunc: func(_ context.Context, req domain.HTTPRequest) (domain.HTTPResponse, error) {
+			capturedReq = req
+			return domain.HTTPResponse{StatusCode: 200, Body: []byte("ok")}, nil
+		},
+	}
+
+	a := newTestApp(mock)
+	root := commands.NewRootCommand(a)
+
+	buf := new(bytes.Buffer)
+	root.SetOut(buf)
+	root.SetErr(buf)
+	root.SetArgs([]string{
+		"get", "https://s3.amazonaws.com/test-bucket",
+		"--auth-aws", "AKIDEXAMPLE:wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY",
+		"--auth-aws-region", "us-east-1",
+		"--auth-aws-service", "s3",
+	})
+
+	err := root.Execute()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Should have Authorization header with AWS4-HMAC-SHA256
+	found := false
+	for _, h := range capturedReq.Headers {
+		if h.Key == "Authorization" && strings.HasPrefix(h.Value, "AWS4-HMAC-SHA256") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected Authorization: AWS4-HMAC-SHA256 header, got headers: %v", capturedReq.Headers)
+	}
+
+	// Should have X-Amz-Date header
+	dateFound := false
+	for _, h := range capturedReq.Headers {
+		if h.Key == "X-Amz-Date" {
+			dateFound = true
+			break
+		}
+	}
+	if !dateFound {
+		t.Errorf("expected X-Amz-Date header, got headers: %v", capturedReq.Headers)
+	}
+}
+
+func TestAuthAWSFlag_InvalidFormat(t *testing.T) {
+	mock := &mockHTTPClient{
+		doFunc: func(_ context.Context, req domain.HTTPRequest) (domain.HTTPResponse, error) {
+			return domain.HTTPResponse{StatusCode: 200, Body: []byte("ok")}, nil
+		},
+	}
+
+	a := newTestApp(mock)
+	root := commands.NewRootCommand(a)
+
+	buf := new(bytes.Buffer)
+	root.SetOut(buf)
+	root.SetErr(buf)
+	root.SetArgs([]string{
+		"get", "https://s3.amazonaws.com/test-bucket",
+		"--auth-aws", "nocolon",
+		"--auth-aws-region", "us-east-1",
+		"--auth-aws-service", "s3",
+	})
+
+	err := root.Execute()
+	if err == nil {
+		t.Fatal("expected error for invalid --auth-aws format, got nil")
+	}
+	if !strings.Contains(err.Error(), "auth-aws") {
+		t.Errorf("error should mention --auth-aws: %v", err)
+	}
+}
+
+func TestAuthOAuth2Flags_ParsedCorrectly(t *testing.T) {
+	var capturedReq domain.HTTPRequest
+	mock := &mockHTTPClient{
+		doFunc: func(_ context.Context, req domain.HTTPRequest) (domain.HTTPResponse, error) {
+			capturedReq = req
+			// Return a token response for the OAuth2 token request,
+			// and a normal response for the actual request.
+			if strings.Contains(req.URL, "token") {
+				return domain.HTTPResponse{
+					StatusCode: 200,
+					Body:       []byte(`{"access_token":"test-token-123","token_type":"Bearer"}`),
+				}, nil
+			}
+			return domain.HTTPResponse{StatusCode: 200, Body: []byte("ok")}, nil
+		},
+	}
+
+	a := newTestApp(mock)
+	root := commands.NewRootCommand(a)
+
+	buf := new(bytes.Buffer)
+	root.SetOut(buf)
+	root.SetErr(buf)
+	root.SetArgs([]string{
+		"get", "https://api.example.com/resource",
+		"--auth-oauth2-url", "https://auth.example.com/token",
+		"--auth-oauth2-client", "my-client:my-secret",
+	})
+
+	err := root.Execute()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// The final request should have Authorization: Bearer header
+	found := false
+	for _, h := range capturedReq.Headers {
+		if h.Key == "Authorization" && h.Value == "Bearer test-token-123" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected Authorization: Bearer test-token-123, got headers: %v", capturedReq.Headers)
 	}
 }
 
