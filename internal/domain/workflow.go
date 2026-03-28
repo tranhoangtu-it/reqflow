@@ -9,6 +9,16 @@ type Workflow struct {
 	Steps []Step
 }
 
+// RetryConfig defines retry behavior for a step.
+type RetryConfig struct {
+	Max          int           // max retry attempts
+	Backoff      string        // "fixed", "linear", "exponential"
+	InitialDelay time.Duration // starting delay (default 1s)
+	RetryOn      []int         // status codes to retry on (e.g., [502, 503, 504])
+	RetryOnError bool          // also retry on network errors
+	Jitter       bool          // add random jitter
+}
+
 // Step represents a single HTTP request within a workflow.
 type Step struct {
 	Name        string
@@ -20,6 +30,7 @@ type Step struct {
 	Assert      []Assertion
 	Auth        *AuthConfig
 	ContentType string
+	Retry       *RetryConfig
 }
 
 // Assertion defines an expected condition on a response.
