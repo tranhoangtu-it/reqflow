@@ -37,73 +37,47 @@ func (r *Runner) Run(ctx context.Context, wf domain.Workflow, initialVars map[st
 	}
 
 	for _, step := range wf.Steps {
-		// If this step has parallel sub-steps, use parallel execution
+		var stepResults []domain.StepResult
+		var extractedVars map[string]string
+
 		if len(step.Parallel) > 0 {
 			subResults, mergedVars, err := r.runParallel(ctx, step, vars)
 			if err != nil {
-				// runParallel itself had an error (not sub-step errors)
 				break
 			}
-
-			// Append all parallel sub-step results
-			for _, sr := range subResults {
-				result.Steps = append(result.Steps, sr)
-				for _, ar := range sr.Assertions {
-					if ar.Passed {
-						result.TotalPassed++
-					} else {
-						result.TotalFailed++
-					}
-				}
-			}
-
-			// Check for errors in parallel sub-steps
-			hasError := false
-			for _, sr := range subResults {
-				if sr.Error != nil {
-					hasError = true
-					break
-				}
-			}
-			if hasError {
-				break
-			}
-
-			// Merge extracted variables for subsequent steps
-			for k, v := range mergedVars {
-				vars[k] = v
-			}
-
-			// Stop on first assertion failure
-			if result.TotalFailed > 0 {
-				break
-			}
-			continue
+			stepResults = subResults
+			extractedVars = mergedVars
+		} else {
+			sr := r.executeStep(ctx, step, vars)
+			stepResults = []domain.StepResult{sr}
+			extractedVars = sr.Extracted
 		}
 
-		stepResult := r.executeStep(ctx, step, vars)
-		result.Steps = append(result.Steps, stepResult)
-
-		// Count assertions
-		for _, ar := range stepResult.Assertions {
-			if ar.Passed {
-				result.TotalPassed++
-			} else {
-				result.TotalFailed++
+		// Collect results and count assertions
+		hasError := false
+		for _, sr := range stepResults {
+			result.Steps = append(result.Steps, sr)
+			if sr.Error != nil {
+				hasError = true
+			}
+			for _, ar := range sr.Assertions {
+				if ar.Passed {
+					result.TotalPassed++
+				} else {
+					result.TotalFailed++
+				}
 			}
 		}
 
-		// Stop on HTTP error
-		if stepResult.Error != nil {
+		if hasError {
 			break
 		}
 
-		// Merge extracted variables for next step
-		for k, v := range stepResult.Extracted {
+		// Merge extracted variables for subsequent steps
+		for k, v := range extractedVars {
 			vars[k] = v
 		}
 
-		// Stop on first assertion failure
 		if result.TotalFailed > 0 {
 			break
 		}
