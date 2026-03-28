@@ -102,5 +102,8 @@ func NewRootCommand(a *app.App, opts ...RootOption) *cobra.Command {
 	// Register config subcommands.
 	root.AddCommand(newConfigCommand())
 
+	// Register workflow run subcommand.
+	root.AddCommand(newRunCommand(a))
+
 	return root
 }

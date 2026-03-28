@@ -2,12 +2,14 @@ package app
 
 import (
 	featurehttp "github.com/ye-kart/reqflow/internal/features/http"
+	"github.com/ye-kart/reqflow/internal/features/runner"
 	"github.com/ye-kart/reqflow/internal/ports/driven"
 )
 
 // App is the main application coordinator that holds all feature executors.
 type App struct {
 	HTTPExecutor *featurehttp.Executor
+	Runner       *runner.Runner
 	Storage      driven.Storage
 	httpClient   driven.HTTPClient
 }
@@ -16,6 +18,7 @@ type App struct {
 func New(httpClient driven.HTTPClient, storage driven.Storage) *App {
 	return &App{
 		HTTPExecutor: featurehttp.NewExecutor(httpClient),
+		Runner:       runner.New(httpClient),
 		Storage:      storage,
 		httpClient:   httpClient,
 	}
