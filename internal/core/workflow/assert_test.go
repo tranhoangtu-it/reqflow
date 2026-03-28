@@ -2,6 +2,7 @@ package workflow_test
 
 import (
 	"testing"
+	"time"
 
 	"github.com/ye-kart/reqflow/internal/core/workflow"
 	"github.com/ye-kart/reqflow/internal/domain"
@@ -224,6 +225,44 @@ func TestEvaluateAssertions_EmptyAssertions(t *testing.T) {
 	results := workflow.EvaluateAssertions(nil, resp)
 	if len(results) != 0 {
 		t.Errorf("expected empty results, got %d", len(results))
+	}
+}
+
+func TestEvaluateAssertions_DurationLessThan_Pass(t *testing.T) {
+	resp := domain.HTTPResponse{
+		StatusCode: 200,
+		Body:       []byte(`{}`),
+		Duration:   200 * time.Millisecond,
+	}
+	assertions := []domain.Assertion{
+		{Field: "duration", Operator: "<", Expected: 500},
+	}
+
+	results := workflow.EvaluateAssertions(assertions, resp)
+	if len(results) != 1 {
+		t.Fatalf("results count = %d, want 1", len(results))
+	}
+	if !results[0].Passed {
+		t.Errorf("expected duration < 500 to pass for 200ms: %s", results[0].Message)
+	}
+}
+
+func TestEvaluateAssertions_DurationLessThan_Fail(t *testing.T) {
+	resp := domain.HTTPResponse{
+		StatusCode: 200,
+		Body:       []byte(`{}`),
+		Duration:   800 * time.Millisecond,
+	}
+	assertions := []domain.Assertion{
+		{Field: "duration", Operator: "<", Expected: 500},
+	}
+
+	results := workflow.EvaluateAssertions(assertions, resp)
+	if len(results) != 1 {
+		t.Fatalf("results count = %d, want 1", len(results))
+	}
+	if results[0].Passed {
+		t.Error("expected duration < 500 to fail for 800ms")
 	}
 }
 

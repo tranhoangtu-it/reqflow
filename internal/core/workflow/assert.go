@@ -31,6 +31,8 @@ func evaluateOne(a domain.Assertion, resp domain.HTTPResponse) domain.AssertionR
 		return evaluateBodyField(a, resp)
 	case strings.HasPrefix(a.Field, "header."):
 		return evaluateHeader(a, resp)
+	case a.Field == "duration":
+		return evaluateDuration(a, resp)
 	default:
 		return domain.AssertionResult{
 			Assertion: a,
@@ -264,5 +266,24 @@ func toFloat64OrNil(v interface{}) *float64 {
 		return &f
 	default:
 		return nil
+	}
+}
+
+func evaluateDuration(a domain.Assertion, resp domain.HTTPResponse) domain.AssertionResult {
+	actualMs := float64(resp.Duration.Milliseconds())
+	expected := toFloat64(a.Expected)
+
+	passed := compareNumeric(actualMs, expected, a.Operator)
+
+	msg := ""
+	if !passed {
+		msg = fmt.Sprintf("duration: expected %s %v ms, got %.0f ms", a.Operator, a.Expected, actualMs)
+	}
+
+	return domain.AssertionResult{
+		Assertion: a,
+		Passed:    passed,
+		Actual:    actualMs,
+		Message:   msg,
 	}
 }
