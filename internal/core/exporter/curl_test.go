@@ -3,8 +3,14 @@ package exporter
 import (
 	"testing"
 
+	"github.com/ye-kart/reqflow/internal/core/importer"
 	"github.com/ye-kart/reqflow/internal/domain"
 )
+
+// parseForRoundTrip delegates to the importer for round-trip fidelity tests.
+func parseForRoundTrip(curlCmd string) (domain.RequestConfig, error) {
+	return importer.ParseCurl(curlCmd)
+}
 
 func TestExportCurl(t *testing.T) {
 	tests := []struct {

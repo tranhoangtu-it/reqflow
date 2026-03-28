@@ -10,7 +10,6 @@ import (
 // ParseCurl parses a cURL command string into a domain.RequestConfig.
 // It handles common curl flags and returns an error for invalid input.
 func ParseCurl(curlCmd string) (domain.RequestConfig, error) {
-	// Normalize: remove backslash line continuations.
 	curlCmd = strings.ReplaceAll(curlCmd, "\\\n", " ")
 	curlCmd = strings.TrimSpace(curlCmd)
 
@@ -18,107 +17,148 @@ func ParseCurl(curlCmd string) (domain.RequestConfig, error) {
 		return domain.RequestConfig{}, fmt.Errorf("empty curl command")
 	}
 
-	// Strip the "curl" prefix if present.
 	tokens := tokenize(curlCmd)
 	if len(tokens) > 0 && tokens[0] == "curl" {
 		tokens = tokens[1:]
 	}
 
-	var (
-		config     domain.RequestConfig
-		methodSet  bool
-		hasData    bool
-		url        string
-	)
+	p := &curlParser{tokens: tokens}
+	return p.parse()
+}
 
-	config.Method = domain.MethodGet
+// curlParser holds state while iterating over tokenized curl arguments.
+type curlParser struct {
+	tokens    []string
+	pos       int
+	config    domain.RequestConfig
+	methodSet bool
+	hasData   bool
+	url       string
+}
 
-	for i := 0; i < len(tokens); i++ {
-		tok := tokens[i]
+func (p *curlParser) parse() (domain.RequestConfig, error) {
+	p.config.Method = domain.MethodGet
 
+	for p.pos = 0; p.pos < len(p.tokens); p.pos++ {
+		tok := p.tokens[p.pos]
+
+		var err error
 		switch tok {
 		case "-X", "--request":
-			i++
-			if i >= len(tokens) {
-				return domain.RequestConfig{}, fmt.Errorf("missing value for %s", tok)
-			}
-			config.Method = domain.HTTPMethod(strings.ToUpper(tokens[i]))
-			methodSet = true
-
+			err = p.handleMethod(tok)
 		case "-H", "--header":
-			i++
-			if i >= len(tokens) {
-				return domain.RequestConfig{}, fmt.Errorf("missing value for %s", tok)
-			}
-			key, value, ok := parseHeaderValue(tokens[i])
-			if ok {
-				config.Headers = append(config.Headers, domain.Header{Key: key, Value: value})
-			}
-
+			err = p.handleHeader(tok)
 		case "-d", "--data", "--data-raw":
-			i++
-			if i >= len(tokens) {
-				return domain.RequestConfig{}, fmt.Errorf("missing value for %s", tok)
-			}
-			config.Body = []byte(tokens[i])
-			hasData = true
-
+			err = p.handleData(tok)
 		case "-u", "--user":
-			i++
-			if i >= len(tokens) {
-				return domain.RequestConfig{}, fmt.Errorf("missing value for %s", tok)
-			}
-			parts := strings.SplitN(tokens[i], ":", 2)
-			if len(parts) == 2 {
-				config.Auth = &domain.AuthConfig{
-					Type: domain.AuthBasic,
-					Basic: &domain.BasicAuthConfig{
-						Username: parts[0],
-						Password: parts[1],
-					},
-				}
-			}
-
+			err = p.handleUser(tok)
 		case "-A", "--user-agent":
-			i++
-			if i >= len(tokens) {
-				return domain.RequestConfig{}, fmt.Errorf("missing value for %s", tok)
-			}
-			config.Headers = append(config.Headers, domain.Header{Key: "User-Agent", Value: tokens[i]})
-
+			err = p.handleUserAgent(tok)
 		case "-b", "--cookie":
-			i++
-			if i >= len(tokens) {
-				return domain.RequestConfig{}, fmt.Errorf("missing value for %s", tok)
-			}
-			config.Headers = append(config.Headers, domain.Header{Key: "Cookie", Value: tokens[i]})
-
+			err = p.handleCookie(tok)
 		case "--compressed":
-			config.Headers = append(config.Headers, domain.Header{Key: "Accept-Encoding", Value: "gzip, deflate, br"})
-
+			p.config.Headers = append(p.config.Headers, domain.Header{
+				Key: "Accept-Encoding", Value: "gzip, deflate, br",
+			})
 		case "-L", "--location", "-k", "--insecure":
-			// Flags stored but not critical for now; skip.
-
+			// Recognized but not critical; skip.
 		default:
-			// Not a flag — treat as URL if it looks like one.
 			if isURL(tok) {
-				url = tok
+				p.url = tok
 			}
+		}
+		if err != nil {
+			return domain.RequestConfig{}, err
 		}
 	}
 
-	if url == "" {
+	if p.url == "" {
 		return domain.RequestConfig{}, fmt.Errorf("no URL found in curl command")
 	}
+	p.config.URL = p.url
 
-	config.URL = url
-
-	// If -d was used but no explicit method, default to POST.
-	if hasData && !methodSet {
-		config.Method = domain.MethodPost
+	if p.hasData && !p.methodSet {
+		p.config.Method = domain.MethodPost
 	}
 
-	return config, nil
+	return p.config, nil
+}
+
+// nextValue advances pos and returns the next token or an error.
+func (p *curlParser) nextValue(flag string) (string, error) {
+	p.pos++
+	if p.pos >= len(p.tokens) {
+		return "", fmt.Errorf("missing value for %s", flag)
+	}
+	return p.tokens[p.pos], nil
+}
+
+func (p *curlParser) handleMethod(flag string) error {
+	val, err := p.nextValue(flag)
+	if err != nil {
+		return err
+	}
+	p.config.Method = domain.HTTPMethod(strings.ToUpper(val))
+	p.methodSet = true
+	return nil
+}
+
+func (p *curlParser) handleHeader(flag string) error {
+	val, err := p.nextValue(flag)
+	if err != nil {
+		return err
+	}
+	key, value, ok := parseHeaderValue(val)
+	if ok {
+		p.config.Headers = append(p.config.Headers, domain.Header{Key: key, Value: value})
+	}
+	return nil
+}
+
+func (p *curlParser) handleData(flag string) error {
+	val, err := p.nextValue(flag)
+	if err != nil {
+		return err
+	}
+	p.config.Body = []byte(val)
+	p.hasData = true
+	return nil
+}
+
+func (p *curlParser) handleUser(flag string) error {
+	val, err := p.nextValue(flag)
+	if err != nil {
+		return err
+	}
+	parts := strings.SplitN(val, ":", 2)
+	if len(parts) == 2 {
+		p.config.Auth = &domain.AuthConfig{
+			Type: domain.AuthBasic,
+			Basic: &domain.BasicAuthConfig{
+				Username: parts[0],
+				Password: parts[1],
+			},
+		}
+	}
+	return nil
+}
+
+func (p *curlParser) handleUserAgent(flag string) error {
+	val, err := p.nextValue(flag)
+	if err != nil {
+		return err
+	}
+	p.config.Headers = append(p.config.Headers, domain.Header{Key: "User-Agent", Value: val})
+	return nil
+}
+
+func (p *curlParser) handleCookie(flag string) error {
+	val, err := p.nextValue(flag)
+	if err != nil {
+		return err
+	}
+	p.config.Headers = append(p.config.Headers, domain.Header{Key: "Cookie", Value: val})
+	return nil
 }
 
 // tokenize splits a curl command string into tokens, respecting single and
@@ -141,7 +181,6 @@ func tokenize(input string) []string {
 			inDouble = !inDouble
 
 		case ch == '\\' && inDouble && i+1 < len(runes):
-			// Handle escaped characters inside double quotes.
 			next := runes[i+1]
 			switch next {
 			case '"', '\\':

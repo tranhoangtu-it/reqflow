@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/ye-kart/reqflow/internal/core/importer"
 	"github.com/ye-kart/reqflow/internal/domain"
 )
 
@@ -80,8 +79,3 @@ func ExportCurl(config domain.RequestConfig) string {
 	return sb.String()
 }
 
-// parseForRoundTrip is a helper used in tests to verify round-trip fidelity.
-// It delegates to the importer's ParseCurl.
-func parseForRoundTrip(curlCmd string) (domain.RequestConfig, error) {
-	return importer.ParseCurl(curlCmd)
-}
