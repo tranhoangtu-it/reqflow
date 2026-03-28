@@ -32,5 +32,9 @@ func NewRootCommand(a *app.App) *cobra.Command {
 	root.AddCommand(newPatchCommand(a))
 	root.AddCommand(newDeleteCommand(a))
 
+	// Register completion command and flag completions.
+	root.AddCommand(newCompletionCommand())
+	registerFlagCompletions(root)
+
 	return root
 }
