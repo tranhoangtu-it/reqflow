@@ -5,6 +5,7 @@ import (
 	"context"
 	"io"
 	"net/http"
+	"net/url"
 	"time"
 
 	"github.com/ye-kart/reqflow/internal/domain"
@@ -54,33 +55,27 @@ func New(opts ...Option) *Client {
 
 // Do executes an HTTP request and returns the response.
 func (c *Client) Do(ctx context.Context, req domain.HTTPRequest) (domain.HTTPResponse, error) {
+	reqURL, err := buildURL(req.URL, req.QueryParams)
+	if err != nil {
+		return domain.HTTPResponse{}, err
+	}
+
 	var bodyReader io.Reader
 	if len(req.Body) > 0 {
 		bodyReader = bytes.NewReader(req.Body)
 	}
 
-	httpReq, err := http.NewRequestWithContext(ctx, string(req.Method), req.URL, bodyReader)
+	httpReq, err := http.NewRequestWithContext(ctx, string(req.Method), reqURL, bodyReader)
 	if err != nil {
 		return domain.HTTPResponse{}, err
 	}
 
-	// Set headers
 	for _, h := range req.Headers {
 		httpReq.Header.Add(h.Key, h.Value)
 	}
 
-	// Set Content-Type if specified
 	if req.ContentType != "" {
 		httpReq.Header.Set("Content-Type", req.ContentType)
-	}
-
-	// Append query params
-	if len(req.QueryParams) > 0 {
-		q := httpReq.URL.Query()
-		for _, qp := range req.QueryParams {
-			q.Add(qp.Key, qp.Value)
-		}
-		httpReq.URL.RawQuery = q.Encode()
 	}
 
 	start := time.Now()
@@ -96,7 +91,6 @@ func (c *Client) Do(ctx context.Context, req domain.HTTPRequest) (domain.HTTPRes
 		return domain.HTTPResponse{}, err
 	}
 
-	// Collect response headers
 	var headers []domain.Header
 	for key, values := range httpResp.Header {
 		for _, v := range values {
@@ -112,4 +106,23 @@ func (c *Client) Do(ctx context.Context, req domain.HTTPRequest) (domain.HTTPRes
 		Duration:   duration,
 		Size:       int64(len(body)),
 	}, nil
+}
+
+func buildURL(baseURL string, params []domain.QueryParam) (string, error) {
+	if len(params) == 0 {
+		return baseURL, nil
+	}
+
+	u, err := url.Parse(baseURL)
+	if err != nil {
+		return "", err
+	}
+
+	q := u.Query()
+	for _, p := range params {
+		q.Add(p.Key, p.Value)
+	}
+	u.RawQuery = q.Encode()
+
+	return u.String(), nil
 }
