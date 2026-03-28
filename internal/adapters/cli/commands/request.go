@@ -33,6 +33,12 @@ func addCurlFlag(cmd *cobra.Command) {
 	cmd.Flags().Bool("curl", false, "print the equivalent cURL command instead of executing")
 }
 
+// addFailOnErrorFlag adds the --fail-on-error and --no-fail-on-error flags.
+func addFailOnErrorFlag(cmd *cobra.Command) {
+	cmd.Flags().Bool("fail-on-error", true, "exit with non-zero code on HTTP 4xx/5xx")
+	cmd.Flags().Bool("no-fail-on-error", false, "do not exit with non-zero code on HTTP 4xx/5xx")
+}
+
 func newGetCommand(a *app.App) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "get <url>",
@@ -42,6 +48,7 @@ func newGetCommand(a *app.App) *cobra.Command {
 	}
 	addAuthFlags(cmd)
 	addCurlFlag(cmd)
+	addFailOnErrorFlag(cmd)
 	return cmd
 }
 
@@ -55,6 +62,7 @@ func newPostCommand(a *app.App) *cobra.Command {
 	addBodyFlags(cmd)
 	addAuthFlags(cmd)
 	addCurlFlag(cmd)
+	addFailOnErrorFlag(cmd)
 	return cmd
 }
 
@@ -68,6 +76,7 @@ func newPutCommand(a *app.App) *cobra.Command {
 	addBodyFlags(cmd)
 	addAuthFlags(cmd)
 	addCurlFlag(cmd)
+	addFailOnErrorFlag(cmd)
 	return cmd
 }
 
@@ -81,6 +90,7 @@ func newPatchCommand(a *app.App) *cobra.Command {
 	addBodyFlags(cmd)
 	addAuthFlags(cmd)
 	addCurlFlag(cmd)
+	addFailOnErrorFlag(cmd)
 	return cmd
 }
 
@@ -93,6 +103,7 @@ func newDeleteCommand(a *app.App) *cobra.Command {
 	}
 	addAuthFlags(cmd)
 	addCurlFlag(cmd)
+	addFailOnErrorFlag(cmd)
 	return cmd
 }
 
@@ -224,7 +235,16 @@ func makeRunE(a *app.App, method domain.HTTPMethod, hasBody bool) func(cmd *cobr
 		// Show trace timing if requested.
 		if trace {
 			fmt.Fprintln(w)
-			return output.FormatTrace(w, result.Response.Timing, noColor)
+			if err := output.FormatTrace(w, result.Response.Timing, noColor); err != nil {
+				return err
+			}
+		}
+
+		// Check if response indicates an error and --fail-on-error is active.
+		if result.Response.StatusCode >= 400 {
+			if shouldFailOnError(cmd) {
+				return domain.NewHTTPError(result.Response.StatusCode, nil)
+			}
 		}
 
 		return nil
@@ -334,6 +354,17 @@ func mergeHeaders(configHeaders, cliHeaders []domain.Header) []domain.Header {
 	// Append all CLI headers.
 	merged = append(merged, cliHeaders...)
 	return merged
+}
+
+// shouldFailOnError returns true if the command should return an error for HTTP 4xx/5xx.
+// --no-fail-on-error takes precedence over --fail-on-error.
+func shouldFailOnError(cmd *cobra.Command) bool {
+	noFail, _ := cmd.Flags().GetBool("no-fail-on-error")
+	if noFail {
+		return false
+	}
+	failOnError, _ := cmd.Flags().GetBool("fail-on-error")
+	return failOnError
 }
 
 // resolveTimeout returns a sensible timeout value.

@@ -3,6 +3,7 @@ package commands_test
 import (
 	"bytes"
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -380,5 +381,121 @@ func TestMissingURL_ReturnsError(t *testing.T) {
 	err := root.Execute()
 	if err == nil {
 		t.Fatal("expected error for missing URL, got nil")
+	}
+}
+
+func TestGetCommand_404_ReturnsExitError(t *testing.T) {
+	mock := &mockHTTPClient{
+		doFunc: func(_ context.Context, req domain.HTTPRequest) (domain.HTTPResponse, error) {
+			return domain.HTTPResponse{
+				StatusCode: 404,
+				Status:     "404 Not Found",
+				Body:       []byte("not found"),
+			}, nil
+		},
+	}
+
+	a := newTestApp(mock)
+	root := commands.NewRootCommand(a)
+
+	buf := new(bytes.Buffer)
+	root.SetOut(buf)
+	root.SetErr(buf)
+	root.SetArgs([]string{"get", "https://example.com/missing"})
+
+	err := root.Execute()
+	if err == nil {
+		t.Fatal("expected error for 404 response, got nil")
+	}
+
+	var exitErr *domain.ExitError
+	if !errors.As(err, &exitErr) {
+		t.Fatalf("expected *domain.ExitError, got %T: %v", err, err)
+	}
+	if exitErr.Code != domain.ExitHTTPError {
+		t.Errorf("Code = %d, want %d", exitErr.Code, domain.ExitHTTPError)
+	}
+}
+
+func TestGetCommand_200_ReturnsNoError(t *testing.T) {
+	mock := &mockHTTPClient{
+		doFunc: func(_ context.Context, req domain.HTTPRequest) (domain.HTTPResponse, error) {
+			return domain.HTTPResponse{
+				StatusCode: 200,
+				Status:     "200 OK",
+				Body:       []byte("ok"),
+			}, nil
+		},
+	}
+
+	a := newTestApp(mock)
+	root := commands.NewRootCommand(a)
+
+	buf := new(bytes.Buffer)
+	root.SetOut(buf)
+	root.SetErr(buf)
+	root.SetArgs([]string{"get", "https://example.com/ok"})
+
+	err := root.Execute()
+	if err != nil {
+		t.Fatalf("expected no error for 200 response, got: %v", err)
+	}
+}
+
+func TestGetCommand_NoFailOnError_404_ReturnsNil(t *testing.T) {
+	mock := &mockHTTPClient{
+		doFunc: func(_ context.Context, req domain.HTTPRequest) (domain.HTTPResponse, error) {
+			return domain.HTTPResponse{
+				StatusCode: 404,
+				Status:     "404 Not Found",
+				Body:       []byte("not found"),
+			}, nil
+		},
+	}
+
+	a := newTestApp(mock)
+	root := commands.NewRootCommand(a)
+
+	buf := new(bytes.Buffer)
+	root.SetOut(buf)
+	root.SetErr(buf)
+	root.SetArgs([]string{"get", "https://example.com/missing", "--no-fail-on-error"})
+
+	err := root.Execute()
+	if err != nil {
+		t.Fatalf("expected no error with --no-fail-on-error, got: %v", err)
+	}
+}
+
+func TestGetCommand_500_ReturnsExitError(t *testing.T) {
+	mock := &mockHTTPClient{
+		doFunc: func(_ context.Context, req domain.HTTPRequest) (domain.HTTPResponse, error) {
+			return domain.HTTPResponse{
+				StatusCode: 500,
+				Status:     "500 Internal Server Error",
+				Body:       []byte("server error"),
+			}, nil
+		},
+	}
+
+	a := newTestApp(mock)
+	root := commands.NewRootCommand(a)
+
+	buf := new(bytes.Buffer)
+	root.SetOut(buf)
+	root.SetErr(buf)
+	root.SetArgs([]string{"get", "https://example.com/error"})
+
+	err := root.Execute()
+	if err == nil {
+		t.Fatal("expected error for 500 response, got nil")
+	}
+
+	var exitErr *domain.ExitError
+	if !errors.As(err, &exitErr) {
+		t.Fatalf("expected *domain.ExitError, got %T: %v", err, err)
+	}
+	if exitErr.Code != domain.ExitHTTPError {
+		t.Errorf("Code = %d, want %d", exitErr.Code, domain.ExitHTTPError)
 	}
 }
