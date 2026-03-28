@@ -9,6 +9,14 @@ type Workflow struct {
 	Steps []Step
 }
 
+// ListenConfig defines a webhook listener that waits for an async callback.
+type ListenConfig struct {
+	Port    int           // port to listen on
+	Path    string        // path to match (e.g., /webhook)
+	Timeout time.Duration // max wait time for callback
+	Capture string        // variable name to store received body
+}
+
 // Step represents a single HTTP request within a workflow.
 type Step struct {
 	Name        string
@@ -20,6 +28,7 @@ type Step struct {
 	Assert      []Assertion
 	Auth        *AuthConfig
 	ContentType string
+	Listen      *ListenConfig // optional webhook listener for async callbacks
 }
 
 // Assertion defines an expected condition on a response.
