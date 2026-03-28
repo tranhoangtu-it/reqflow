@@ -10,6 +10,7 @@ type Workflow struct {
 }
 
 // Step represents a single HTTP request within a workflow.
+// A step may contain a Parallel block of sub-steps that execute concurrently.
 type Step struct {
 	Name        string
 	Method      HTTPMethod
@@ -20,6 +21,9 @@ type Step struct {
 	Assert      []Assertion
 	Auth        *AuthConfig
 	ContentType string
+	Parallel    []Step // sub-steps to run in parallel
+	MaxParallel int    // concurrency limit (0 = unlimited)
+	FailFast    bool   // cancel remaining on first failure (default true)
 }
 
 // Assertion defines an expected condition on a response.
