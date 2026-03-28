@@ -53,6 +53,7 @@ type HTTPRequest struct {
 	QueryParams []QueryParam
 	Body        []byte
 	ContentType string
+	NoCookies   bool
 }
 
 // TimingInfo holds detailed timing breakdown for an HTTP request.
@@ -87,4 +88,5 @@ type RequestConfig struct {
 	ContentType string
 	Auth        *AuthConfig
 	Timeout     time.Duration
+	NoCookies   bool
 }

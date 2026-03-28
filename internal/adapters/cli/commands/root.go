@@ -108,5 +108,8 @@ func NewRootCommand(a *app.App, opts ...RootOption) *cobra.Command {
 	// Register collection management subcommand.
 	root.AddCommand(newCollectionCommand(a))
 
+	// Register cookie management subcommand.
+	root.AddCommand(newCookieCommand(a))
+
 	return root
 }

@@ -73,6 +73,11 @@ func addAssertFlag(cmd *cobra.Command) {
 	cmd.Flags().StringSlice("assert", nil, `assert response condition (e.g. "status == 200")`)
 }
 
+// addCookieFlags adds cookie-related flags to a command.
+func addCookieFlags(cmd *cobra.Command) {
+	cmd.Flags().Bool("no-cookies", false, "disable cookie handling for this request")
+}
+
 func newGetCommand(a *app.App) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "get <url>",
@@ -87,6 +92,7 @@ func newGetCommand(a *app.App) *cobra.Command {
 	addRetryFlags(cmd)
 	addExtractFlag(cmd)
 	addAssertFlag(cmd)
+	addCookieFlags(cmd)
 	return cmd
 }
 
@@ -105,6 +111,7 @@ func newPostCommand(a *app.App) *cobra.Command {
 	addRetryFlags(cmd)
 	addExtractFlag(cmd)
 	addAssertFlag(cmd)
+	addCookieFlags(cmd)
 	return cmd
 }
 
@@ -123,6 +130,7 @@ func newPutCommand(a *app.App) *cobra.Command {
 	addRetryFlags(cmd)
 	addExtractFlag(cmd)
 	addAssertFlag(cmd)
+	addCookieFlags(cmd)
 	return cmd
 }
 
@@ -141,6 +149,7 @@ func newPatchCommand(a *app.App) *cobra.Command {
 	addRetryFlags(cmd)
 	addExtractFlag(cmd)
 	addAssertFlag(cmd)
+	addCookieFlags(cmd)
 	return cmd
 }
 
@@ -158,6 +167,7 @@ func newDeleteCommand(a *app.App) *cobra.Command {
 	addRetryFlags(cmd)
 	addExtractFlag(cmd)
 	addAssertFlag(cmd)
+	addCookieFlags(cmd)
 	return cmd
 }
 
@@ -235,6 +245,12 @@ func makeRunE(a *app.App, method domain.HTTPMethod, hasBody bool) func(cmd *cobr
 				}
 			}
 			config.Auth = authConfig
+		}
+
+		// Parse cookie flags.
+		noCookies, _ := cmd.Flags().GetBool("no-cookies")
+		if noCookies {
+			config.NoCookies = true
 		}
 
 		// If --curl flag is set, print the curl equivalent and return.

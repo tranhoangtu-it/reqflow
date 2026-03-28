@@ -11,9 +11,10 @@ import (
 // applying variable substitution and auto-detecting content-type.
 func BuildRequest(config domain.RequestConfig, vars map[string]string) (domain.HTTPRequest, error) {
 	req := domain.HTTPRequest{
-		Method: config.Method,
-		URL:    substituteVars(config.URL, vars),
-		Body:   config.Body,
+		Method:    config.Method,
+		URL:       substituteVars(config.URL, vars),
+		Body:      config.Body,
+		NoCookies: config.NoCookies,
 	}
 
 	// Copy and substitute headers.

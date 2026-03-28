@@ -24,6 +24,7 @@ const defaultTimeout = 30 * time.Second
 type Client struct {
 	httpClient *http.Client
 	trace      bool
+	cookieJar  driven.CookieJar
 }
 
 // Option configures the Client.
@@ -47,6 +48,13 @@ func WithTransport(t http.RoundTripper) Option {
 func WithTrace(enabled bool) Option {
 	return func(c *Client) {
 		c.trace = enabled
+	}
+}
+
+// WithCookieJar sets a cookie jar for automatic cookie management.
+func WithCookieJar(jar driven.CookieJar) Option {
+	return func(c *Client) {
+		c.cookieJar = jar
 	}
 }
 
@@ -88,6 +96,16 @@ func (c *Client) Do(ctx context.Context, req domain.HTTPRequest) (domain.HTTPRes
 		httpReq.Header.Set("Content-Type", req.ContentType)
 	}
 
+	// Add cookies from jar if available and not disabled for this request.
+	if c.cookieJar != nil && !req.NoCookies {
+		cookies, jarErr := c.cookieJar.GetCookies(reqURL)
+		if jarErr == nil {
+			for _, dc := range cookies {
+				httpReq.AddCookie(&http.Cookie{Name: dc.Name, Value: dc.Value})
+			}
+		}
+	}
+
 	var timing domain.TimingInfo
 	if c.trace {
 		httpReq = c.withTrace(httpReq, &timing)
@@ -103,6 +121,35 @@ func (c *Client) Do(ctx context.Context, req domain.HTTPRequest) (domain.HTTPRes
 
 	if c.trace {
 		timing.Total = duration
+	}
+
+	// Store Set-Cookie response headers in jar if available and not disabled.
+	if c.cookieJar != nil && !req.NoCookies {
+		if setCookies := httpResp.Cookies(); len(setCookies) > 0 {
+			var domainCookies []domain.Cookie
+			for _, hc := range setCookies {
+				dc := domain.Cookie{
+					Name:     hc.Name,
+					Value:    hc.Value,
+					Domain:   hc.Domain,
+					Path:     hc.Path,
+					Expires:  hc.Expires,
+					Secure:   hc.Secure,
+					HTTPOnly: hc.HttpOnly,
+				}
+				// If domain not set in cookie, infer from request URL.
+				if dc.Domain == "" {
+					if u, parseErr := url.Parse(reqURL); parseErr == nil {
+						dc.Domain = u.Hostname()
+					}
+				}
+				if dc.Path == "" {
+					dc.Path = "/"
+				}
+				domainCookies = append(domainCookies, dc)
+			}
+			_ = c.cookieJar.SetCookies(reqURL, domainCookies)
+		}
 	}
 
 	body, err := io.ReadAll(httpResp.Body)
