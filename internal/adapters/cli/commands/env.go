@@ -26,8 +26,6 @@ func newEnvCommand(a *app.App) *cobra.Command {
 		Long:  "Manage environment files for variable substitution in requests.",
 	}
 
-	cmd.PersistentFlags().String("env-dir", defaultEnvDir(), "directory containing environment files")
-
 	cmd.AddCommand(newEnvListCommand(a))
 	cmd.AddCommand(newEnvShowCommand(a))
 	cmd.AddCommand(newEnvCreateCommand(a))

@@ -11,7 +11,7 @@ func TestRootCommand_HasExpectedSubcommands(t *testing.T) {
 	a := &app.App{}
 	root := commands.NewRootCommand(a)
 
-	expectedCmds := []string{"get", "post", "put", "patch", "delete"}
+	expectedCmds := []string{"get", "post", "put", "patch", "delete", "env"}
 	subCmds := root.Commands()
 
 	cmdNames := make(map[string]bool)
@@ -40,6 +40,8 @@ func TestRootCommand_HasGlobalFlags(t *testing.T) {
 		{"verbose", "v"},
 		{"header", "H"},
 		{"query", "q"},
+		{"env", "e"},
+		{"env-dir", ""},
 	}
 
 	for _, f := range flags {
