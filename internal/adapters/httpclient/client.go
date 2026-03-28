@@ -96,8 +96,8 @@ func (c *Client) Do(ctx context.Context, req domain.HTTPRequest) (domain.HTTPRes
 		httpReq.Header.Set("Content-Type", req.ContentType)
 	}
 
-	// Add cookies from jar if available.
-	if c.cookieJar != nil {
+	// Add cookies from jar if available and not disabled for this request.
+	if c.cookieJar != nil && !req.NoCookies {
 		cookies, jarErr := c.cookieJar.GetCookies(reqURL)
 		if jarErr == nil {
 			for _, dc := range cookies {
@@ -123,8 +123,8 @@ func (c *Client) Do(ctx context.Context, req domain.HTTPRequest) (domain.HTTPRes
 		timing.Total = duration
 	}
 
-	// Store Set-Cookie response headers in jar if available.
-	if c.cookieJar != nil {
+	// Store Set-Cookie response headers in jar if available and not disabled.
+	if c.cookieJar != nil && !req.NoCookies {
 		if setCookies := httpResp.Cookies(); len(setCookies) > 0 {
 			var domainCookies []domain.Cookie
 			for _, hc := range setCookies {
