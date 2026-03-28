@@ -12,6 +12,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/ye-kart/reqflow/internal/adapters/cli/output"
 	"github.com/ye-kart/reqflow/internal/app"
+	coreauth "github.com/ye-kart/reqflow/internal/core/auth"
 	"github.com/ye-kart/reqflow/internal/core/variable"
 	"github.com/ye-kart/reqflow/internal/core/workflow"
 	"github.com/ye-kart/reqflow/internal/domain"
@@ -29,6 +30,12 @@ func addAuthFlags(cmd *cobra.Command) {
 	cmd.Flags().String("auth-bearer", "", "bearer token")
 	cmd.Flags().String("auth-apikey-header", "", `API key in header (format "HeaderName:Value")`)
 	cmd.Flags().String("auth-apikey-query", "", `API key in query (format "paramName=Value")`)
+	cmd.Flags().String("auth-oauth2-url", "", "OAuth2 token endpoint URL")
+	cmd.Flags().String("auth-oauth2-client", "", `OAuth2 client credentials (format "client_id:client_secret")`)
+	cmd.Flags().String("auth-digest", "", `digest auth credentials (format "username:password")`)
+	cmd.Flags().String("auth-aws", "", `AWS credentials (format "access_key:secret_key")`)
+	cmd.Flags().String("auth-aws-region", "", "AWS region for signature")
+	cmd.Flags().String("auth-aws-service", "", "AWS service name for signature")
 }
 
 // addRetryFlags adds retry-related flags to a command.
@@ -213,6 +220,20 @@ func makeRunE(a *app.App, method domain.HTTPMethod, hasBody bool) func(cmd *cobr
 			return err
 		}
 		if authConfig != nil {
+			// OAuth2 requires fetching a token before applying auth.
+			if authConfig.Type == domain.AuthOAuth2 && authConfig.OAuth2 != nil {
+				tokenCtx, tokenCancel := context.WithTimeout(context.Background(), resolveTimeout(timeout))
+				defer tokenCancel()
+				token, tokenErr := coreauth.FetchOAuth2Token(tokenCtx, *authConfig.OAuth2, a.HTTPClient())
+				if tokenErr != nil {
+					return fmt.Errorf("oauth2 token fetch failed: %w", tokenErr)
+				}
+				// Replace with a Bearer auth config containing the fetched token.
+				authConfig = &domain.AuthConfig{
+					Type:   domain.AuthBearer,
+					Bearer: &domain.BearerAuthConfig{Token: token},
+				}
+			}
 			config.Auth = authConfig
 		}
 
@@ -408,6 +429,61 @@ func parseAuthFlags(cmd *cobra.Command) (*domain.AuthConfig, error) {
 				Key:      parts[0],
 				Value:    parts[1],
 				Location: domain.APIKeyInQuery,
+			},
+		}, nil
+	}
+
+	oauth2URL, _ := cmd.Flags().GetString("auth-oauth2-url")
+	if oauth2URL != "" {
+		clientCreds, _ := cmd.Flags().GetString("auth-oauth2-client")
+		if clientCreds == "" {
+			return nil, fmt.Errorf("--auth-oauth2-client is required when using --auth-oauth2-url")
+		}
+		parts := strings.SplitN(clientCreds, ":", 2)
+		if len(parts) != 2 {
+			return nil, fmt.Errorf("invalid --auth-oauth2-client format, expected 'client_id:client_secret'")
+		}
+		return &domain.AuthConfig{
+			Type: domain.AuthOAuth2,
+			OAuth2: &domain.OAuth2Config{
+				TokenURL:     oauth2URL,
+				ClientID:     parts[0],
+				ClientSecret: parts[1],
+				GrantType:    "client_credentials",
+			},
+		}, nil
+	}
+
+	digest, _ := cmd.Flags().GetString("auth-digest")
+	if digest != "" {
+		parts := strings.SplitN(digest, ":", 2)
+		if len(parts) != 2 {
+			return nil, fmt.Errorf("invalid --auth-digest format, expected 'username:password'")
+		}
+		return &domain.AuthConfig{
+			Type: domain.AuthDigest,
+			Digest: &domain.DigestAuthConfig{
+				Username: parts[0],
+				Password: parts[1],
+			},
+		}, nil
+	}
+
+	awsCreds, _ := cmd.Flags().GetString("auth-aws")
+	if awsCreds != "" {
+		parts := strings.SplitN(awsCreds, ":", 2)
+		if len(parts) != 2 {
+			return nil, fmt.Errorf("invalid --auth-aws format, expected 'access_key:secret_key'")
+		}
+		region, _ := cmd.Flags().GetString("auth-aws-region")
+		service, _ := cmd.Flags().GetString("auth-aws-service")
+		return &domain.AuthConfig{
+			Type: domain.AuthAWS,
+			AWS: &domain.AWSAuthConfig{
+				AccessKey: parts[0],
+				SecretKey: parts[1],
+				Region:    region,
+				Service:   service,
 			},
 		}, nil
 	}

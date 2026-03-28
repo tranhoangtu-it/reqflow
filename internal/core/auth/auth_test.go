@@ -118,10 +118,83 @@ func TestApply(t *testing.T) {
 			},
 		},
 		{
+			name: "digest auth with valid config",
+			req:  baseReq,
+			config: &domain.AuthConfig{
+				Type: domain.AuthDigest,
+				Digest: &domain.DigestAuthConfig{
+					Username: "admin",
+					Password: "secret",
+				},
+			},
+			checkFunc: func(t *testing.T, got domain.HTTPRequest) {
+				// Digest auth through the dispatcher stores credentials
+				// but doesn't add Authorization header (needs challenge first).
+				// The dispatcher just validates the config is present.
+				if len(got.Headers) < len(baseReq.Headers) {
+					t.Errorf("headers count = %d, want at least %d", len(got.Headers), len(baseReq.Headers))
+				}
+			},
+		},
+		{
+			name: "aws auth with valid config",
+			req:  baseReq,
+			config: &domain.AuthConfig{
+				Type: domain.AuthAWS,
+				AWS: &domain.AWSAuthConfig{
+					AccessKey: "AKIDEXAMPLE",
+					SecretKey: "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY",
+					Region:    "us-east-1",
+					Service:   "execute-api",
+				},
+			},
+			checkFunc: func(t *testing.T, got domain.HTTPRequest) {
+				var authValue string
+				for _, h := range got.Headers {
+					if h.Key == "Authorization" {
+						authValue = h.Value
+						break
+					}
+				}
+				if authValue == "" {
+					t.Error("expected Authorization header, got none")
+				}
+			},
+		},
+		{
+			name: "oauth2 type returns error from dispatcher",
+			req:  baseReq,
+			config: &domain.AuthConfig{
+				Type: domain.AuthOAuth2,
+				OAuth2: &domain.OAuth2Config{
+					TokenURL: "https://auth.example.com/token",
+				},
+			},
+			wantErr: domain.ErrInvalidAuth,
+		},
+		{
 			name: "unknown type returns error",
 			req:  baseReq,
 			config: &domain.AuthConfig{
-				Type: "oauth2",
+				Type: "unknown-type",
+			},
+			wantErr: domain.ErrInvalidAuth,
+		},
+		{
+			name: "digest type with nil Digest field returns error",
+			req:  baseReq,
+			config: &domain.AuthConfig{
+				Type:   domain.AuthDigest,
+				Digest: nil,
+			},
+			wantErr: domain.ErrInvalidAuth,
+		},
+		{
+			name: "aws type with nil AWS field returns error",
+			req:  baseReq,
+			config: &domain.AuthConfig{
+				Type: domain.AuthAWS,
+				AWS:  nil,
 			},
 			wantErr: domain.ErrInvalidAuth,
 		},
