@@ -37,7 +37,12 @@ func (r *Runner) Run(ctx context.Context, wf domain.Workflow, initialVars map[st
 	}
 
 	for _, step := range wf.Steps {
-		stepResult := r.executeStep(ctx, step, vars)
+		var stepResult domain.StepResult
+		if step.Poll != nil {
+			stepResult = r.pollStep(ctx, step, vars)
+		} else {
+			stepResult = r.executeStep(ctx, step, vars)
+		}
 		result.Steps = append(result.Steps, stepResult)
 
 		// Count assertions
