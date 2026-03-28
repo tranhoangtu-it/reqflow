@@ -24,6 +24,8 @@ func NewRootCommand(a *app.App) *cobra.Command {
 	root.PersistentFlags().BoolP("verbose", "v", false, "show request details")
 	root.PersistentFlags().StringSliceP("header", "H", nil, `add headers (format "Key: Value")`)
 	root.PersistentFlags().StringSliceP("query", "q", nil, `add query params (format "key=value")`)
+	root.PersistentFlags().StringP("env", "e", "", "environment to load variables from")
+	root.PersistentFlags().String("env-dir", defaultEnvDir(), "directory containing environment files")
 
 	// Register HTTP method subcommands.
 	root.AddCommand(newGetCommand(a))
@@ -39,6 +41,9 @@ func NewRootCommand(a *app.App) *cobra.Command {
 	// Register import/export subcommands.
 	root.AddCommand(newImportCommand(a))
 	root.AddCommand(newExportCommand(a))
+
+	// Register environment management subcommand.
+	root.AddCommand(newEnvCommand(a))
 
 	return root
 }

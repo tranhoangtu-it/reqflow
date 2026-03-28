@@ -8,11 +8,13 @@ import (
 // App is the main application coordinator that holds all feature executors.
 type App struct {
 	HTTPExecutor *featurehttp.Executor
+	Storage      driven.Storage
 }
 
 // New creates a new App wired with the given adapters.
-func New(httpClient driven.HTTPClient) *App {
+func New(httpClient driven.HTTPClient, storage driven.Storage) *App {
 	return &App{
 		HTTPExecutor: featurehttp.NewExecutor(httpClient),
+		Storage:      storage,
 	}
 }
