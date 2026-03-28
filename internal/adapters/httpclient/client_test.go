@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ye-kart/reqflow/internal/adapters/cookiejar"
 	"github.com/ye-kart/reqflow/internal/adapters/httpclient"
 	"github.com/ye-kart/reqflow/internal/domain"
 )
@@ -626,6 +627,93 @@ func TestDo_Trace(t *testing.T) {
 			t.Errorf("expected zero Total without trace, got %v", resp.Timing.Total)
 		}
 	})
+}
+
+func TestDo_CookieJar_SendsCookiesWithRequest(t *testing.T) {
+	jar := cookiejar.New()
+	_ = jar.SetCookies("http://example.com/", []domain.Cookie{
+		{Name: "session", Value: "abc123", Domain: "example.com", Path: "/"},
+	})
+
+	var receivedCookie string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		receivedCookie = r.Header.Get("Cookie")
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	// The test server's host is 127.0.0.1, so we need cookies for that host.
+	_ = jar.SetCookies(srv.URL, []domain.Cookie{
+		{Name: "session", Value: "abc123", Domain: "127.0.0.1", Path: "/"},
+	})
+
+	client := httpclient.New(httpclient.WithCookieJar(jar))
+	_, err := client.Do(context.Background(), domain.HTTPRequest{
+		Method: domain.MethodGet,
+		URL:    srv.URL,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if !strings.Contains(receivedCookie, "session=abc123") {
+		t.Errorf("expected Cookie header to contain 'session=abc123', got %q", receivedCookie)
+	}
+}
+
+func TestDo_CookieJar_StoresSetCookieResponseHeaders(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.SetCookie(w, &http.Cookie{
+			Name:  "token",
+			Value: "xyz789",
+			Path:  "/",
+		})
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	jar := cookiejar.New()
+	client := httpclient.New(httpclient.WithCookieJar(jar))
+
+	_, err := client.Do(context.Background(), domain.HTTPRequest{
+		Method: domain.MethodGet,
+		URL:    srv.URL,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	cookies, err := jar.All()
+	if err != nil {
+		t.Fatalf("jar.All: unexpected error: %v", err)
+	}
+
+	found := false
+	for _, c := range cookies {
+		if c.Name == "token" && c.Value == "xyz789" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected jar to contain 'token=xyz789', got %v", cookies)
+	}
+}
+
+func TestDo_NoCookieJar_DoesNotPanic(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	client := httpclient.New() // no jar
+	_, err := client.Do(context.Background(), domain.HTTPRequest{
+		Method: domain.MethodGet,
+		URL:    srv.URL,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 }
 
 // fixedRoundTripper is a test helper that returns a fixed response.
