@@ -11,7 +11,7 @@ func TestRootCommand_HasExpectedSubcommands(t *testing.T) {
 	a := &app.App{}
 	root := commands.NewRootCommand(a)
 
-	expectedCmds := []string{"get", "post", "put", "patch", "delete"}
+	expectedCmds := []string{"get", "post", "put", "patch", "delete", "config"}
 	subCmds := root.Commands()
 
 	cmdNames := make(map[string]bool)
