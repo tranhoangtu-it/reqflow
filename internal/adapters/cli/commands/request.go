@@ -27,6 +27,11 @@ func addAuthFlags(cmd *cobra.Command) {
 	cmd.Flags().String("auth-apikey-query", "", `API key in query (format "paramName=Value")`)
 }
 
+// addCurlFlag adds the --curl flag for exporting instead of executing.
+func addCurlFlag(cmd *cobra.Command) {
+	cmd.Flags().Bool("curl", false, "print the equivalent cURL command instead of executing")
+}
+
 func newGetCommand(a *app.App) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "get <url>",
@@ -35,6 +40,7 @@ func newGetCommand(a *app.App) *cobra.Command {
 		RunE:  makeRunE(a, domain.MethodGet, false),
 	}
 	addAuthFlags(cmd)
+	addCurlFlag(cmd)
 	return cmd
 }
 
@@ -47,6 +53,7 @@ func newPostCommand(a *app.App) *cobra.Command {
 	}
 	addBodyFlags(cmd)
 	addAuthFlags(cmd)
+	addCurlFlag(cmd)
 	return cmd
 }
 
@@ -59,6 +66,7 @@ func newPutCommand(a *app.App) *cobra.Command {
 	}
 	addBodyFlags(cmd)
 	addAuthFlags(cmd)
+	addCurlFlag(cmd)
 	return cmd
 }
 
@@ -71,6 +79,7 @@ func newPatchCommand(a *app.App) *cobra.Command {
 	}
 	addBodyFlags(cmd)
 	addAuthFlags(cmd)
+	addCurlFlag(cmd)
 	return cmd
 }
 
@@ -82,6 +91,7 @@ func newDeleteCommand(a *app.App) *cobra.Command {
 		RunE:  makeRunE(a, domain.MethodDelete, false),
 	}
 	addAuthFlags(cmd)
+	addCurlFlag(cmd)
 	return cmd
 }
 
@@ -138,6 +148,12 @@ func makeRunE(a *app.App, method domain.HTTPMethod, hasBody bool) func(cmd *cobr
 		}
 		if authConfig != nil {
 			config.Auth = authConfig
+		}
+
+		// If --curl flag is set, print the curl equivalent and return.
+		curlExport, _ := cmd.Flags().GetBool("curl")
+		if curlExport {
+			return printCurlExport(cmd, config)
 		}
 
 		// Execute the request.
