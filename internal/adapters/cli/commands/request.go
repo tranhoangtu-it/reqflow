@@ -3,7 +3,6 @@ package commands
 import (
 	"context"
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -178,6 +177,27 @@ func makeRunE(a *app.App, method domain.HTTPMethod, hasBody bool) func(cmd *cobr
 			vars = variable.Resolve(env.Variables)
 		}
 
+		// Parse display flags.
+		verbose, _ := cmd.Flags().GetBool("verbose")
+		dryRun, _ := cmd.Flags().GetBool("dry-run")
+		trace, _ := cmd.Flags().GetBool("trace")
+		noColor, _ := cmd.Flags().GetBool("no-color")
+		w := cmd.OutOrStdout()
+
+		// Dry-run mode: build request and display it without sending.
+		if dryRun {
+			req, err := a.HTTPExecutor.BuildRequest(config, nil)
+			if err != nil {
+				return fmt.Errorf("building request: %w", err)
+			}
+			return output.FormatDryRun(w, req, noColor)
+		}
+
+		// Enable trace timing if requested.
+		if trace {
+			a.EnableTrace()
+		}
+
 		// Execute the request.
 		ctx, cancel := context.WithTimeout(context.Background(), resolveTimeout(timeout))
 		defer cancel()
@@ -187,11 +207,27 @@ func makeRunE(a *app.App, method domain.HTTPMethod, hasBody bool) func(cmd *cobr
 			return fmt.Errorf("request failed: %w", err)
 		}
 
-		// Format and write response.
-		outputFmt, _ := cmd.Flags().GetString("output")
-		noColor, _ := cmd.Flags().GetBool("no-color")
-		formatter := output.New(domain.OutputFormat(outputFmt), noColor)
-		return formatter.FormatResponse(os.Stdout, result.Response)
+		// Verbose mode: show request and response details.
+		if verbose {
+			if err := output.FormatVerbose(w, result.Request, result.Response, noColor); err != nil {
+				return err
+			}
+		} else {
+			// Normal mode: format and write response.
+			outputFmt, _ := cmd.Flags().GetString("output")
+			formatter := output.New(domain.OutputFormat(outputFmt), noColor)
+			if err := formatter.FormatResponse(w, result.Response); err != nil {
+				return err
+			}
+		}
+
+		// Show trace timing if requested.
+		if trace {
+			fmt.Fprintln(w)
+			return output.FormatTrace(w, result.Response.Timing, noColor)
+		}
+
+		return nil
 	}
 }
 

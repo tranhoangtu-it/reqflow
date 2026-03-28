@@ -557,6 +557,77 @@ func TestDo_Options(t *testing.T) {
 	})
 }
 
+func TestDo_Trace(t *testing.T) {
+	t.Run("timing fields are populated with trace enabled", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte("ok"))
+		}))
+		defer srv.Close()
+
+		client := httpclient.New(httpclient.WithTrace(true))
+		resp, err := client.Do(context.Background(), domain.HTTPRequest{
+			Method: domain.MethodGet,
+			URL:    srv.URL,
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		if resp.Timing.Total <= 0 {
+			t.Errorf("expected Total > 0, got %v", resp.Timing.Total)
+		}
+		if resp.Timing.TCPConnect <= 0 {
+			t.Errorf("expected TCPConnect > 0, got %v", resp.Timing.TCPConnect)
+		}
+		if resp.Timing.FirstByte <= 0 {
+			t.Errorf("expected FirstByte > 0, got %v", resp.Timing.FirstByte)
+		}
+	})
+
+	t.Run("timing Total >= FirstByte (logical ordering)", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte("ok"))
+		}))
+		defer srv.Close()
+
+		client := httpclient.New(httpclient.WithTrace(true))
+		resp, err := client.Do(context.Background(), domain.HTTPRequest{
+			Method: domain.MethodGet,
+			URL:    srv.URL,
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		if resp.Timing.Total < resp.Timing.FirstByte {
+			t.Errorf("Total (%v) should be >= FirstByte (%v)", resp.Timing.Total, resp.Timing.FirstByte)
+		}
+	})
+
+	t.Run("timing is zero when trace not enabled", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte("ok"))
+		}))
+		defer srv.Close()
+
+		client := httpclient.New() // no trace
+		resp, err := client.Do(context.Background(), domain.HTTPRequest{
+			Method: domain.MethodGet,
+			URL:    srv.URL,
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		if resp.Timing.Total != 0 {
+			t.Errorf("expected zero Total without trace, got %v", resp.Timing.Total)
+		}
+	})
+}
+
 // fixedRoundTripper is a test helper that returns a fixed response.
 type fixedRoundTripper struct {
 	resp *http.Response

@@ -55,6 +55,15 @@ type HTTPRequest struct {
 	ContentType string
 }
 
+// TimingInfo holds detailed timing breakdown for an HTTP request.
+type TimingInfo struct {
+	DNSLookup    time.Duration
+	TCPConnect   time.Duration
+	TLSHandshake time.Duration
+	FirstByte    time.Duration
+	Total        time.Duration
+}
+
 // HTTPResponse represents an HTTP response received from a server.
 type HTTPResponse struct {
 	StatusCode int
@@ -63,6 +72,7 @@ type HTTPResponse struct {
 	Body       []byte
 	Duration   time.Duration
 	Size       int64
+	Timing     TimingInfo
 }
 
 // RequestConfig represents the user's request configuration before variable

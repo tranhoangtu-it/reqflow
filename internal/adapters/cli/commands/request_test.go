@@ -3,6 +3,7 @@ package commands_test
 import (
 	"bytes"
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/ye-kart/reqflow/internal/adapters/cli/commands"
@@ -233,6 +234,131 @@ func TestAuthBearerFlag_ParsedCorrectly(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("expected Authorization: Bearer my-jwt-token, got headers: %v", capturedReq.Headers)
+	}
+}
+
+func TestVerboseFlag_ShowsRequestAndResponseDetails(t *testing.T) {
+	mock := &mockHTTPClient{
+		doFunc: func(_ context.Context, req domain.HTTPRequest) (domain.HTTPResponse, error) {
+			return domain.HTTPResponse{
+				StatusCode: 200,
+				Status:     "200 OK",
+				Headers: []domain.Header{
+					{Key: "Content-Type", Value: "application/json"},
+				},
+				Body: []byte(`{"ok":true}`),
+			}, nil
+		},
+	}
+
+	a := newTestApp(mock)
+	root := commands.NewRootCommand(a)
+
+	buf := new(bytes.Buffer)
+	root.SetOut(buf)
+	root.SetErr(buf)
+	root.SetArgs([]string{"get", "https://api.example.com/users", "--verbose", "--no-color"})
+
+	err := root.Execute()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	output := buf.String()
+
+	// Should have request lines
+	if !strings.Contains(output, "> GET") {
+		t.Errorf("expected verbose request line with '> GET', got:\n%s", output)
+	}
+
+	// Should have response lines
+	if !strings.Contains(output, "< HTTP/1.1 200 OK") {
+		t.Errorf("expected verbose response line '< HTTP/1.1 200 OK', got:\n%s", output)
+	}
+}
+
+func TestDryRunFlag_DoesNotMakeHTTPCall(t *testing.T) {
+	callCount := 0
+	mock := &mockHTTPClient{
+		doFunc: func(_ context.Context, req domain.HTTPRequest) (domain.HTTPResponse, error) {
+			callCount++
+			return domain.HTTPResponse{StatusCode: 200, Body: []byte("ok")}, nil
+		},
+	}
+
+	a := newTestApp(mock)
+	root := commands.NewRootCommand(a)
+
+	buf := new(bytes.Buffer)
+	root.SetOut(buf)
+	root.SetErr(buf)
+	root.SetArgs([]string{"get", "https://example.com/api", "--dry-run", "--no-color"})
+
+	err := root.Execute()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if callCount != 0 {
+		t.Errorf("expected no HTTP calls with --dry-run, got %d", callCount)
+	}
+}
+
+func TestDryRunFlag_ShowsDryRunIndicator(t *testing.T) {
+	mock := &mockHTTPClient{
+		doFunc: func(_ context.Context, req domain.HTTPRequest) (domain.HTTPResponse, error) {
+			return domain.HTTPResponse{StatusCode: 200, Body: []byte("ok")}, nil
+		},
+	}
+
+	a := newTestApp(mock)
+	root := commands.NewRootCommand(a)
+
+	buf := new(bytes.Buffer)
+	root.SetOut(buf)
+	root.SetErr(buf)
+	root.SetArgs([]string{"get", "https://example.com/api", "--dry-run", "--no-color"})
+
+	err := root.Execute()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	output := buf.String()
+	if !strings.Contains(output, "DRY RUN") {
+		t.Errorf("expected 'DRY RUN' indicator, got:\n%s", output)
+	}
+}
+
+func TestDryRunFlag_ShowsRequestDetails(t *testing.T) {
+	mock := &mockHTTPClient{
+		doFunc: func(_ context.Context, req domain.HTTPRequest) (domain.HTTPResponse, error) {
+			return domain.HTTPResponse{StatusCode: 200, Body: []byte("ok")}, nil
+		},
+	}
+
+	a := newTestApp(mock)
+	root := commands.NewRootCommand(a)
+
+	buf := new(bytes.Buffer)
+	root.SetOut(buf)
+	root.SetErr(buf)
+	root.SetArgs([]string{"get", "https://example.com/api", "--dry-run", "--no-color", "-H", "Accept: application/json"})
+
+	err := root.Execute()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	output := buf.String()
+	if !strings.Contains(output, "> GET /api HTTP/1.1") {
+		t.Errorf("expected request line, got:\n%s", output)
+	}
+	if !strings.Contains(output, "> Host: example.com") {
+		t.Errorf("expected host header, got:\n%s", output)
+	}
+	if !strings.Contains(output, "> Accept: application/json") {
+		t.Errorf("expected Accept header, got:\n%s", output)
 	}
 }
 

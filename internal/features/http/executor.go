@@ -20,20 +20,29 @@ func NewExecutor(hc driven.HTTPClient) *Executor {
 	return &Executor{httpClient: hc}
 }
 
-// Execute builds a request from config, applies auth, sends it, and returns the result.
-func (e *Executor) Execute(ctx context.Context, config domain.RequestConfig, vars map[string]string) (domain.ExecutionResult, error) {
-	// Build the HTTP request with variable substitution.
+// BuildRequest builds a fully resolved HTTP request from config without sending it.
+// This applies variable substitution and auth but does not make an HTTP call.
+func (e *Executor) BuildRequest(config domain.RequestConfig, vars map[string]string) (domain.HTTPRequest, error) {
 	req, err := request.BuildRequest(config, vars)
 	if err != nil {
-		return domain.ExecutionResult{}, fmt.Errorf("building request: %w", err)
+		return domain.HTTPRequest{}, fmt.Errorf("building request: %w", err)
 	}
 
-	// Apply authentication if configured.
 	if config.Auth != nil {
 		req, err = auth.Apply(req, config.Auth)
 		if err != nil {
-			return domain.ExecutionResult{}, fmt.Errorf("applying auth: %w", err)
+			return domain.HTTPRequest{}, fmt.Errorf("applying auth: %w", err)
 		}
+	}
+
+	return req, nil
+}
+
+// Execute builds a request from config, applies auth, sends it, and returns the result.
+func (e *Executor) Execute(ctx context.Context, config domain.RequestConfig, vars map[string]string) (domain.ExecutionResult, error) {
+	req, err := e.BuildRequest(config, vars)
+	if err != nil {
+		return domain.ExecutionResult{}, err
 	}
 
 	// Send the request via the HTTP client adapter.

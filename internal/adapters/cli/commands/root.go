@@ -78,6 +78,8 @@ func NewRootCommand(a *app.App, opts ...RootOption) *cobra.Command {
 	root.PersistentFlags().StringSliceP("query", "q", nil, `add query params (format "key=value")`)
 	root.PersistentFlags().StringP("env", "e", "", "environment to load variables from")
 	root.PersistentFlags().String("env-dir", defaultEnvDir(), "directory containing environment files")
+	root.PersistentFlags().Bool("dry-run", false, "show request that would be sent without executing it")
+	root.PersistentFlags().Bool("trace", false, "show detailed timing breakdown")
 
 	// Register HTTP method subcommands.
 	root.AddCommand(newGetCommand(a))

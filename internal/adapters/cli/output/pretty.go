@@ -1,8 +1,6 @@
 package output
 
 import (
-	"bytes"
-	"encoding/json"
 	"fmt"
 	"io"
 
@@ -34,7 +32,7 @@ func (f *PrettyFormatter) FormatResponse(w io.Writer, resp domain.HTTPResponse) 
 	// Body
 	if len(resp.Body) > 0 {
 		fmt.Fprintln(w) // blank separator line
-		body := f.formatBody(resp.Body)
+		body := prettyPrintBody(resp.Body)
 		fmt.Fprintln(w, body)
 	}
 
@@ -56,12 +54,4 @@ func (f *PrettyFormatter) colorizeStatus(s string, code int) string {
 	default:
 		return s
 	}
-}
-
-func (f *PrettyFormatter) formatBody(body []byte) string {
-	var prettyJSON bytes.Buffer
-	if json.Indent(&prettyJSON, body, "", "  ") == nil {
-		return prettyJSON.String()
-	}
-	return string(body)
 }

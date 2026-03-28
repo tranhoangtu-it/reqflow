@@ -178,6 +178,56 @@ func TestExecute_ReturnsErrorWhenHTTPClientFails(t *testing.T) {
 	}
 }
 
+func TestBuildRequest_ReturnsRequestWithoutSending(t *testing.T) {
+	callCount := 0
+	mock := &mockHTTPClient{
+		doFunc: func(_ context.Context, _ domain.HTTPRequest) (domain.HTTPResponse, error) {
+			callCount++
+			return domain.HTTPResponse{}, nil
+		},
+	}
+
+	executor := featurehttp.NewExecutor(mock)
+	config := domain.RequestConfig{
+		Method: domain.MethodGet,
+		URL:    "https://example.com/api",
+		Headers: []domain.Header{
+			{Key: "Accept", Value: "application/json"},
+		},
+		Auth: &domain.AuthConfig{
+			Type:   domain.AuthBearer,
+			Bearer: &domain.BearerAuthConfig{Token: "my-token"},
+		},
+	}
+
+	req, err := executor.BuildRequest(config, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if callCount != 0 {
+		t.Errorf("expected no HTTP calls, got %d", callCount)
+	}
+	if req.Method != domain.MethodGet {
+		t.Errorf("expected method GET, got %s", req.Method)
+	}
+	if req.URL != "https://example.com/api" {
+		t.Errorf("expected URL https://example.com/api, got %s", req.URL)
+	}
+
+	// Auth should be applied
+	found := false
+	for _, h := range req.Headers {
+		if h.Key == "Authorization" && h.Value == "Bearer my-token" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected Authorization header, got headers: %v", req.Headers)
+	}
+}
+
 func TestExecute_ReturnsErrorWhenAuthConfigInvalid(t *testing.T) {
 	mock := &mockHTTPClient{
 		doFunc: func(_ context.Context, _ domain.HTTPRequest) (domain.HTTPResponse, error) {
