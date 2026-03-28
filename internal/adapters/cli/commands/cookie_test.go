@@ -191,6 +191,43 @@ func TestCookieDeleteCommand_DeletesSpecificCookie(t *testing.T) {
 	}
 }
 
+func TestNoCookiesFlag_SkipsCookieHandling(t *testing.T) {
+	jar := cookiejar.New()
+	_ = jar.SetCookies("http://127.0.0.1/", []domain.Cookie{
+		{Name: "session", Value: "abc", Domain: "127.0.0.1", Path: "/"},
+	})
+
+	var capturedReq domain.HTTPRequest
+	mock := &mockHTTPClient{
+		doFunc: func(_ context.Context, req domain.HTTPRequest) (domain.HTTPResponse, error) {
+			capturedReq = req
+			return domain.HTTPResponse{StatusCode: 200, Body: []byte("ok")}, nil
+		},
+	}
+
+	a := newTestApp(mock)
+	a.CookieJar = jar
+
+	root := commands.NewRootCommand(a)
+
+	buf := new(bytes.Buffer)
+	root.SetOut(buf)
+	root.SetErr(buf)
+	root.SetArgs([]string{"get", "http://127.0.0.1/test", "--no-cookies"})
+
+	err := root.Execute()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// When --no-cookies is set, no Cookie header should be present.
+	for _, h := range capturedReq.Headers {
+		if h.Key == "Cookie" {
+			t.Errorf("expected no Cookie header with --no-cookies, got: %s", h.Value)
+		}
+	}
+}
+
 func TestCookieListCommand_DoesNotShowExpired(t *testing.T) {
 	jar := cookiejar.New()
 	_ = jar.SetCookies("http://example.com/", []domain.Cookie{

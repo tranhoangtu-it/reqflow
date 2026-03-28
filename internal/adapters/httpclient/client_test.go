@@ -700,6 +700,49 @@ func TestDo_CookieJar_StoresSetCookieResponseHeaders(t *testing.T) {
 	}
 }
 
+func TestDo_CookieJar_NoCookiesSkipsCookieHandling(t *testing.T) {
+	jar := cookiejar.New()
+	_ = jar.SetCookies("http://127.0.0.1/", []domain.Cookie{
+		{Name: "session", Value: "abc123", Domain: "127.0.0.1", Path: "/"},
+	})
+
+	var receivedCookie string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		receivedCookie = r.Header.Get("Cookie")
+		http.SetCookie(w, &http.Cookie{Name: "new_cookie", Value: "val", Path: "/"})
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	// Set cookie for the test server's host
+	_ = jar.SetCookies(srv.URL, []domain.Cookie{
+		{Name: "session", Value: "abc123", Domain: "127.0.0.1", Path: "/"},
+	})
+
+	client := httpclient.New(httpclient.WithCookieJar(jar))
+	_, err := client.Do(context.Background(), domain.HTTPRequest{
+		Method:    domain.MethodGet,
+		URL:       srv.URL,
+		NoCookies: true,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Should NOT have sent any cookies
+	if receivedCookie != "" {
+		t.Errorf("expected no Cookie header with NoCookies=true, got %q", receivedCookie)
+	}
+
+	// Should NOT have stored the Set-Cookie from response
+	all, _ := jar.All()
+	for _, c := range all {
+		if c.Name == "new_cookie" {
+			t.Error("expected Set-Cookie to be ignored when NoCookies=true")
+		}
+	}
+}
+
 func TestDo_NoCookieJar_DoesNotPanic(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
