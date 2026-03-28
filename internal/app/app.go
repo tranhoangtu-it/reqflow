@@ -11,6 +11,7 @@ type App struct {
 	HTTPExecutor *featurehttp.Executor
 	Runner       *runner.Runner
 	Storage      driven.Storage
+	CookieJar    driven.CookieJar
 	httpClient   driven.HTTPClient
 }
 

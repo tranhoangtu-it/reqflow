@@ -105,5 +105,8 @@ func NewRootCommand(a *app.App, opts ...RootOption) *cobra.Command {
 	// Register workflow run subcommand.
 	root.AddCommand(newRunCommand(a))
 
+	// Register cookie management subcommand.
+	root.AddCommand(newCookieCommand(a))
+
 	return root
 }
