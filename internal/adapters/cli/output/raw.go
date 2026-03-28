@@ -6,9 +6,13 @@ import (
 	"github.com/ye-kart/reqflow/internal/domain"
 )
 
-// RawFormatter outputs only the response body.
+// RawFormatter outputs only the response body with no decoration.
 type RawFormatter struct{}
 
 func (f *RawFormatter) FormatResponse(w io.Writer, resp domain.HTTPResponse) error {
-	return nil
+	if len(resp.Body) == 0 {
+		return nil
+	}
+	_, err := w.Write(resp.Body)
+	return err
 }
