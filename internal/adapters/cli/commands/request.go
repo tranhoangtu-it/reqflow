@@ -113,14 +113,21 @@ func makeRunE(a *app.App, method domain.HTTPMethod, hasBody bool) func(cmd *cobr
 			config.Timeout = timeout
 		}
 
-		// Parse headers from persistent flags.
+		// Build headers: config defaults first, then CLI flags override by key.
+		cfg := configFromContext(cmd.Context())
+		var configHeaders []domain.Header
+		if cfg != nil {
+			configHeaders = cfg.DefaultHeaders
+		}
 		headers, _ := cmd.Flags().GetStringSlice("header")
+		var cliHeaders []domain.Header
 		for _, h := range headers {
 			key, value, ok := parseHeader(h)
 			if ok {
-				config.Headers = append(config.Headers, domain.Header{Key: key, Value: value})
+				cliHeaders = append(cliHeaders, domain.Header{Key: key, Value: value})
 			}
 		}
+		config.Headers = mergeHeaders(configHeaders, cliHeaders)
 
 		// Parse query params from persistent flags.
 		queries, _ := cmd.Flags().GetStringSlice("query")
@@ -266,6 +273,31 @@ func parseAuthFlags(cmd *cobra.Command) (*domain.AuthConfig, error) {
 	}
 
 	return nil, nil
+}
+
+// mergeHeaders combines config default headers with CLI flag headers.
+// CLI headers override config headers with the same key.
+func mergeHeaders(configHeaders, cliHeaders []domain.Header) []domain.Header {
+	if len(configHeaders) == 0 {
+		return cliHeaders
+	}
+
+	// Build set of CLI header keys for fast lookup.
+	cliKeys := make(map[string]bool, len(cliHeaders))
+	for _, h := range cliHeaders {
+		cliKeys[h.Key] = true
+	}
+
+	// Start with config headers that are not overridden.
+	merged := make([]domain.Header, 0, len(configHeaders)+len(cliHeaders))
+	for _, h := range configHeaders {
+		if !cliKeys[h.Key] {
+			merged = append(merged, h)
+		}
+	}
+	// Append all CLI headers.
+	merged = append(merged, cliHeaders...)
+	return merged
 }
 
 // resolveTimeout returns a sensible timeout value.

@@ -5,16 +5,68 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/ye-kart/reqflow/internal/app"
+	"github.com/ye-kart/reqflow/internal/platform/config"
 )
 
+// RootOption is a functional option for configuring the root command.
+type RootOption func(*rootOptions)
+
+type rootOptions struct {
+	configOpts []config.LoadOption
+}
+
+// WithGlobalConfigDir sets the global config directory for testing.
+func WithGlobalConfigDir(dir string) RootOption {
+	return func(o *rootOptions) {
+		o.configOpts = append(o.configOpts, config.WithGlobalDir(dir))
+	}
+}
+
+// WithProjectConfigDir sets the project config directory for testing.
+func WithProjectConfigDir(dir string) RootOption {
+	return func(o *rootOptions) {
+		o.configOpts = append(o.configOpts, config.WithProjectDir(dir))
+	}
+}
+
 // NewRootCommand creates the root cobra command with all subcommands.
-func NewRootCommand(a *app.App) *cobra.Command {
+func NewRootCommand(a *app.App, opts ...RootOption) *cobra.Command {
+	o := &rootOptions{}
+	for _, opt := range opts {
+		opt(o)
+	}
+
 	root := &cobra.Command{
 		Use:   "reqflow",
 		Short: "A developer-friendly HTTP client for the terminal",
 		Long:  "reqflow is a CLI tool for sending HTTP requests with variable substitution, authentication, and environment management.",
 		SilenceUsage:  true,
 		SilenceErrors: true,
+		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := config.Load(o.configOpts...)
+			if err != nil {
+				return err
+			}
+
+			// Apply config defaults where flags were not explicitly set.
+			if !cmd.Flags().Changed("output") {
+				cmd.Flags().Set("output", string(cfg.Output))
+			}
+			if !cmd.Flags().Changed("no-color") {
+				if cfg.NoColor {
+					cmd.Flags().Set("no-color", "true")
+				}
+			}
+			if !cmd.Flags().Changed("timeout") {
+				cmd.Flags().Set("timeout", cfg.Timeout.String())
+			}
+
+			// Store config and config options in the command context for subcommands.
+			cmd.SetContext(withConfig(cmd.Context(), cfg))
+			cmd.SetContext(withConfigOpts(cmd.Context(), o.configOpts))
+
+			return nil
+		},
 	}
 
 	// Global persistent flags.
@@ -44,6 +96,9 @@ func NewRootCommand(a *app.App) *cobra.Command {
 
 	// Register environment management subcommand.
 	root.AddCommand(newEnvCommand(a))
+
+	// Register config subcommands.
+	root.AddCommand(newConfigCommand())
 
 	return root
 }
