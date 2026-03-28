@@ -24,6 +24,8 @@ func NewRootCommand(a *app.App) *cobra.Command {
 	root.PersistentFlags().BoolP("verbose", "v", false, "show request details")
 	root.PersistentFlags().StringSliceP("header", "H", nil, `add headers (format "Key: Value")`)
 	root.PersistentFlags().StringSliceP("query", "q", nil, `add query params (format "key=value")`)
+	root.PersistentFlags().Bool("dry-run", false, "show request that would be sent without executing it")
+	root.PersistentFlags().Bool("trace", false, "show detailed timing breakdown")
 
 	// Register HTTP method subcommands.
 	root.AddCommand(newGetCommand(a))
