@@ -20,6 +20,24 @@ type Step struct {
 	Assert      []Assertion
 	Auth        *AuthConfig
 	ContentType string
+	Poll        *PollConfig
+}
+
+// PollConfig configures poll-until-ready behavior for async endpoints.
+type PollConfig struct {
+	Interval time.Duration // time between polls
+	Timeout  time.Duration // max total wait time
+	Until    string        // JSONPath condition: "$.status == 'completed'"
+	Backoff  string        // backoff strategy: "fixed" (default), "linear", "exponential"
+}
+
+// PollAttempt records a single poll attempt for debugging/logging.
+type PollAttempt struct {
+	Number     int
+	StatusCode int
+	Body       []byte
+	Duration   time.Duration
+	ConditionMet bool
 }
 
 // Assertion defines an expected condition on a response.
@@ -31,13 +49,14 @@ type Assertion struct {
 
 // StepResult holds the outcome of executing a single workflow step.
 type StepResult struct {
-	StepName   string
-	Request    HTTPRequest
-	Response   HTTPResponse
-	Assertions []AssertionResult
-	Extracted  map[string]string
-	Error      error
-	Duration   time.Duration
+	StepName     string
+	Request      HTTPRequest
+	Response     HTTPResponse
+	Assertions   []AssertionResult
+	Extracted    map[string]string
+	Error        error
+	Duration     time.Duration
+	PollAttempts []PollAttempt
 }
 
 // AssertionResult holds the outcome of evaluating a single assertion.
