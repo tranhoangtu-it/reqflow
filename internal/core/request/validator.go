@@ -9,35 +9,27 @@ import (
 
 // ValidateRequest validates a fully resolved HTTPRequest.
 func ValidateRequest(req domain.HTTPRequest) error {
-	if req.URL == "" {
-		return fmt.Errorf("%w", domain.ErrEmptyURL)
-	}
-
-	if !req.Method.IsValid() {
-		return fmt.Errorf("%w: %s", domain.ErrInvalidMethod, req.Method)
-	}
-
-	u, err := url.ParseRequestURI(req.URL)
-	if err != nil || u.Scheme == "" {
-		return fmt.Errorf("%w: %s", domain.ErrInvalidURL, req.URL)
-	}
-
-	return nil
+	return validateMethodAndURL(req.Method, req.URL)
 }
 
 // ValidateConfig validates a RequestConfig before building.
 func ValidateConfig(config domain.RequestConfig) error {
-	if config.URL == "" {
+	return validateMethodAndURL(config.Method, config.URL)
+}
+
+// validateMethodAndURL is the shared validation logic for method and URL checks.
+func validateMethodAndURL(method domain.HTTPMethod, rawURL string) error {
+	if rawURL == "" {
 		return fmt.Errorf("%w", domain.ErrEmptyURL)
 	}
 
-	if !config.Method.IsValid() {
-		return fmt.Errorf("%w: %s", domain.ErrInvalidMethod, config.Method)
+	if !method.IsValid() {
+		return fmt.Errorf("%w: %s", domain.ErrInvalidMethod, method)
 	}
 
-	u, err := url.ParseRequestURI(config.URL)
+	u, err := url.ParseRequestURI(rawURL)
 	if err != nil || u.Scheme == "" {
-		return fmt.Errorf("%w: %s", domain.ErrInvalidURL, config.URL)
+		return fmt.Errorf("%w: %s", domain.ErrInvalidURL, rawURL)
 	}
 
 	return nil
