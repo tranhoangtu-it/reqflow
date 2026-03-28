@@ -61,6 +61,26 @@ func defaultProjectDir() string {
 	return wd
 }
 
+// ResolveGlobalDir returns the global config directory from the given options,
+// or the default if none is configured.
+func ResolveGlobalDir(opts []LoadOption) string {
+	o := &loadOptions{globalDir: defaultGlobalDir()}
+	for _, opt := range opts {
+		opt(o)
+	}
+	return o.globalDir
+}
+
+// ResolveProjectDir returns the project config directory from the given options,
+// or the default if none is configured.
+func ResolveProjectDir(opts []LoadOption) string {
+	o := &loadOptions{projectDir: defaultProjectDir()}
+	for _, opt := range opts {
+		opt(o)
+	}
+	return o.projectDir
+}
+
 // Load loads the merged configuration from global and project-local config files.
 // Precedence: project-local > global > defaults.
 func Load(opts ...LoadOption) (*domain.AppConfig, error) {
