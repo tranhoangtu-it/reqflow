@@ -1,5 +1,12 @@
 # reqflow
 
+> **Warning**
+> This project is in early development and is **not ready for production use**. APIs, commands, and file formats are subject to breaking changes without notice. Expect missing features, incomplete documentation, and untested edge cases. Contributions and feedback are welcome — see the [Roadmap](#roadmap) for current status.
+
+[![Status: Experimental](https://img.shields.io/badge/status-experimental-orange)](https://github.com/ye-kart/reqflow)
+[![Go](https://img.shields.io/badge/go-1.22+-00ADD8?logo=go&logoColor=white)](https://go.dev)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 A powerful HTTP client for the terminal. Combines curl's simplicity with Postman's organization, adds async workflow orchestration, and is designed from the ground up for both humans and AI agents.
 
 ```
